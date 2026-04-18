@@ -2,15 +2,19 @@ package compaction
 
 import (
 	"context"
+	"path"
+	"sync"
 	"time"
 
 	"github.com/basekick-labs/firn/internal/catalog"
 	"github.com/basekick-labs/firn/internal/config"
 	"github.com/basekick-labs/firn/internal/iceberg"
 	"github.com/basekick-labs/firn/internal/storage"
+	"github.com/rs/zerolog/log"
+	"golang.org/x/sync/errgroup"
 )
 
-// Candidate is a group of files in the same partition that should be merged.
+// Candidate is a group of files in the same partition ready to be merged.
 type Candidate struct {
 	Table     catalog.TableIdentifier
 	Partition string
@@ -28,27 +32,27 @@ type DataFileInfo struct {
 
 // Result is the outcome of a single compaction job.
 type Result struct {
-	Table          catalog.TableIdentifier
-	Partition      string
-	InputFiles     []string
-	OutputFile     string
-	OutputSize     int64
-	BytesBefore    int64
-	BytesAfter     int64
-	Duration       time.Duration
+	Table       catalog.TableIdentifier
+	Partition   string
+	InputFiles  []string
+	OutputFile  string
+	OutputSize  int64
+	BytesBefore int64
+	BytesAfter  int64
+	Duration    time.Duration
 }
 
 // SubprocessConfig is serialized to stdin of the compact subprocess.
 type SubprocessConfig struct {
-	JobID         string              `json:"job_id"`
-	InputFiles    []string            `json:"input_files"`
-	OutputPath    string              `json:"output_path"`
-	SortKeys      []string            `json:"sort_keys"`
-	Strategy      string              `json:"strategy"`
-	MemoryLimit   string              `json:"memory_limit"`
-	StorageType   string              `json:"storage_type"`
-	StorageConfig string              `json:"storage_config"` // JSON-encoded backend config
-	TempDir       string              `json:"temp_dir"`
+	JobID         string   `json:"job_id"`
+	InputFiles    []string `json:"input_files"`
+	OutputPath    string   `json:"output_path"`
+	SortKeys      []string `json:"sort_keys"`
+	Strategy      string   `json:"strategy"`
+	MemoryLimit   string   `json:"memory_limit"`
+	StorageType   string   `json:"storage_type"`
+	StorageConfig string   `json:"storage_config"`
+	TempDir       string   `json:"temp_dir"`
 }
 
 // SubprocessResult is serialized from stdout of the compact subprocess.
@@ -91,47 +95,111 @@ func (e *Engine) FindCandidates(ctx context.Context, id catalog.TableIdentifier,
 	return selectCandidates(id, files, policy), nil
 }
 
-// listDataFiles walks manifest list → manifests → data files for a snapshot.
+// listDataFiles walks the manifest list → manifests → data file entries for
+// the given snapshot and returns one DataFileInfo per live data file.
 func (e *Engine) listDataFiles(ctx context.Context, meta *iceberg.TableMetadata, snap *iceberg.Snapshot) ([]DataFileInfo, error) {
-	// TODO: read Avro manifest list from snap.ManifestList via storage,
-	// walk each ManifestFile, read data files from each manifest.
-	// Placeholder until Avro manifest reading is implemented.
-	_ = ctx
-	_ = meta
-	_ = snap
-	return nil, nil
-}
-
-// selectCandidates groups files by partition and applies policy filters.
-func selectCandidates(id catalog.TableIdentifier, files []DataFileInfo, policy config.CompactionPolicy) []Candidate {
-	if !policy.Enabled {
-		return nil
+	manifests, err := iceberg.ReadManifestList(ctx, e.storage, snap.ManifestList)
+	if err != nil {
+		return nil, err
 	}
 
-	// Group by partition (placeholder: single partition until manifest parsing is done).
-	if len(files) < policy.MinFileCount {
+	// Build snapshot ID → timestamp map for age lookup.
+	snapTimes := make(map[int64]time.Time, len(meta.Snapshots))
+	for _, s := range meta.Snapshots {
+		snapTimes[s.SnapshotID] = s.Timestamp()
+	}
+	// Fallback: if entry has no snapshot_id, use the current snapshot time.
+	defaultTime := snap.Timestamp()
+
+	const manifestReadWorkers = 4
+
+	var (
+		mu      sync.Mutex
+		results []DataFileInfo
+		sem     = make(chan struct{}, manifestReadWorkers)
+	)
+
+	g, gctx := errgroup.WithContext(ctx)
+
+	for _, mf := range manifests {
+		mf := mf
+		g.Go(func() error {
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-gctx.Done():
+				return gctx.Err()
+			}
+
+			entries, err := iceberg.ReadManifest(gctx, e.storage, mf.Path)
+			if err != nil {
+				log.Error().Err(err).Str("manifest", mf.Path).Msg("read manifest failed")
+				return err
+			}
+
+			local := make([]DataFileInfo, 0, len(entries))
+			for _, entry := range entries {
+				if entry.DataFile.Content != 0 {
+					continue // skip delete files
+				}
+				addedAt := defaultTime
+				if entry.SnapshotID != nil {
+					if t, ok := snapTimes[*entry.SnapshotID]; ok {
+						addedAt = t
+					}
+				}
+				local = append(local, DataFileInfo{
+					Path:      entry.DataFile.FilePath,
+					SizeBytes: entry.DataFile.FileSizeBytes,
+					AddedAt:   addedAt,
+				})
+			}
+
+			mu.Lock()
+			results = append(results, local...)
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+// selectCandidates groups files by partition and applies policy filters,
+// returning one Candidate per eligible partition group.
+func selectCandidates(id catalog.TableIdentifier, files []DataFileInfo, policy config.CompactionPolicy) []Candidate {
+	if !policy.Enabled || len(files) == 0 {
 		return nil
 	}
 
 	minAge := time.Duration(policy.MinFileAgeMinutes) * time.Minute
 	cutoff := time.Now().UTC().Add(-minAge)
 
-	var eligible []DataFileInfo
+	// Group files by partition (directory of the file path).
+	groups := make(map[string][]DataFileInfo)
 	for _, f := range files {
+		partition := path.Dir(f.Path)
 		if f.AddedAt.Before(cutoff) {
-			eligible = append(eligible, f)
+			groups[partition] = append(groups[partition], f)
 		}
 	}
 
-	if len(eligible) < policy.MinFileCount {
-		return nil
+	var candidates []Candidate
+	for partition, group := range groups {
+		if len(group) < policy.MinFileCount {
+			continue
+		}
+		candidates = append(candidates, Candidate{
+			Table:     id,
+			Partition: partition,
+			Files:     group,
+			Policy:    policy,
+		})
 	}
-
-	return []Candidate{{
-		Table:  id,
-		Files:  eligible,
-		Policy: policy,
-	}}
+	return candidates
 }
 
 // RunSubprocess is the entrypoint called by cmd/compact.
