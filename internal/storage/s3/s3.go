@@ -18,7 +18,29 @@ type Backend struct {
 	bucket string
 }
 
+// RawConfig holds the flat fields needed to build an S3 client without
+// importing the daemon config package. Used by the compact subprocess.
+type RawConfig struct {
+	Bucket          string
+	Endpoint        string
+	Region          string
+	AccessKeyID     string
+	SecretAccessKey string
+	PathStyle       bool
+}
+
 func New(ctx context.Context, cfg config.StorageConfig, bucket string) (*Backend, error) {
+	return NewFromRaw(ctx, RawConfig{
+		Bucket:          bucket,
+		Endpoint:        cfg.Endpoint,
+		Region:          cfg.Region,
+		AccessKeyID:     cfg.AccessKeyID,
+		SecretAccessKey: cfg.SecretAccessKey,
+		PathStyle:       cfg.PathStyle,
+	})
+}
+
+func NewFromRaw(ctx context.Context, cfg RawConfig) (*Backend, error) {
 	opts := []func(*awsconfig.LoadOptions) error{
 		awsconfig.WithRegion(cfg.Region),
 	}
@@ -44,7 +66,7 @@ func New(ctx context.Context, cfg config.StorageConfig, bucket string) (*Backend
 
 	return &Backend{
 		client: s3.NewFromConfig(awsCfg, clientOpts...),
-		bucket: bucket,
+		bucket: cfg.Bucket,
 	}, nil
 }
 
