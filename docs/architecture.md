@@ -87,6 +87,7 @@ type StorageBackend interface {
     Exists(ctx context.Context, path string) (bool, error)
     List(ctx context.Context, prefix string) ([]string, error)
     StatFile(ctx context.Context, path string) (int64, error)
+    ModTime(ctx context.Context, path string) (time.Time, error)
 }
 ```
 
