@@ -93,7 +93,7 @@ func (m *mockCatalog) CommitTransaction(_ context.Context, _ catalog.TableIdenti
 var tableID = catalog.TableIdentifier{Namespace: "ns", Name: "t"}
 
 func policy(hours int) config.OrphanCleanupPolicy {
-	return config.OrphanCleanupPolicy{Enabled: true, GracePeriodHours: hours}
+	return config.OrphanCleanupPolicy{Enabled: testutil.BoolPtr(true), GracePeriodHours: hours}
 }
 
 // --- helpers ---
@@ -136,7 +136,7 @@ func buildTable(t *testing.T, tableLocation string) (*testutil.MemStorage, *iceb
 func TestExecuteCleanup_Disabled(t *testing.T) {
 	cat := &mockCatalog{meta: &iceberg.TableMetadata{Location: "s3://bucket/table"}}
 	e := NewEngine(cat, testutil.NewMemStorage(nil))
-	result, err := e.ExecuteCleanup(context.Background(), tableID, config.OrphanCleanupPolicy{Enabled: false})
+	result, err := e.ExecuteCleanup(context.Background(), tableID, config.OrphanCleanupPolicy{Enabled: testutil.BoolPtr(false)})
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.ScannedFiles)
 	assert.Equal(t, 0, result.DeletedFiles)

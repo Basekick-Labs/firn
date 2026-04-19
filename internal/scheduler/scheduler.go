@@ -121,7 +121,7 @@ func (s *Scheduler) cycle(ctx context.Context) error {
 func (s *Scheduler) maintain(ctx context.Context, id catalog.TableIdentifier) {
 	p := s.policy.For(id)
 
-	if p.Compaction.Enabled {
+	if p.Compaction.IsEnabled() {
 		candidates, err := s.engine.FindCandidates(ctx, id, p.Compaction)
 		if err != nil {
 			log.Error().Err(err).Str("table", id.String()).Msg("find candidates failed")
@@ -145,7 +145,7 @@ func (s *Scheduler) maintain(ctx context.Context, id catalog.TableIdentifier) {
 		}
 	}
 
-	if p.SnapshotExpiry.Enabled {
+	if p.SnapshotExpiry.IsEnabled() {
 		result, err := s.expiry.ExecuteExpiry(ctx, id, p.SnapshotExpiry)
 		if err != nil {
 			log.Error().Err(err).Str("table", id.String()).Msg("snapshot expiry failed")
@@ -160,7 +160,7 @@ func (s *Scheduler) maintain(ctx context.Context, id catalog.TableIdentifier) {
 		}
 	}
 
-	if p.OrphanCleanup.Enabled {
+	if p.OrphanCleanup.IsEnabled() {
 		result, err := s.orphan.ExecuteCleanup(ctx, id, p.OrphanCleanup)
 		if err != nil {
 			log.Error().Err(err).Str("table", id.String()).Msg("orphan cleanup failed")

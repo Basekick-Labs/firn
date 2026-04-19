@@ -110,7 +110,7 @@ func TestSelectExpired(t *testing.T) {
 	fresh := now.Add(-1 * time.Hour) // within any reasonable window
 
 	policy := config.SnapshotExpiry{
-		Enabled:             true,
+		Enabled:             testutil.BoolPtr(true),
 		MinSnapshotsToKeep:  2,
 		MaxSnapshotAgeHours: 120,
 	}
@@ -124,7 +124,7 @@ func TestSelectExpired(t *testing.T) {
 		{
 			name:    "disabled policy",
 			meta:    &iceberg.TableMetadata{Snapshots: []iceberg.Snapshot{{SnapshotID: 1, TimestampMs: ms(old)}}},
-			policy:  config.SnapshotExpiry{Enabled: false},
+			policy:  config.SnapshotExpiry{Enabled: testutil.BoolPtr(false)},
 			wantIDs: nil,
 		},
 		{
@@ -166,7 +166,7 @@ func TestSelectExpired(t *testing.T) {
 					{SnapshotID: 3, ParentSnapshotID: 0, TimestampMs: ms(fresh)},
 				},
 			},
-			policy:  config.SnapshotExpiry{Enabled: true, MinSnapshotsToKeep: 1, MaxSnapshotAgeHours: 120},
+			policy:  config.SnapshotExpiry{Enabled: testutil.BoolPtr(true), MinSnapshotsToKeep: 1, MaxSnapshotAgeHours: 120},
 			wantIDs: []int64{1, 2},
 		},
 		{
@@ -184,7 +184,7 @@ func TestSelectExpired(t *testing.T) {
 					{SnapshotID: 6, ParentSnapshotID: 5, TimestampMs: ms(fresh)},
 				},
 			},
-			policy:  config.SnapshotExpiry{Enabled: true, MinSnapshotsToKeep: 5, MaxSnapshotAgeHours: 120},
+			policy:  config.SnapshotExpiry{Enabled: testutil.BoolPtr(true), MinSnapshotsToKeep: 5, MaxSnapshotAgeHours: 120},
 			wantIDs: []int64{4}, // oldest 3 of the 4 expirables are kept; newest expirable (4) is dropped
 		},
 		{
@@ -210,7 +210,7 @@ func TestSelectExpired(t *testing.T) {
 					{SnapshotID: 3, ParentSnapshotID: 1, TimestampMs: ms(fresh)},
 				},
 			},
-			policy:  config.SnapshotExpiry{Enabled: true, MinSnapshotsToKeep: 1, MaxSnapshotAgeHours: 120},
+			policy:  config.SnapshotExpiry{Enabled: testutil.BoolPtr(true), MinSnapshotsToKeep: 1, MaxSnapshotAgeHours: 120},
 			wantIDs: []int64{2},
 		},
 		{
@@ -222,7 +222,7 @@ func TestSelectExpired(t *testing.T) {
 					{SnapshotID: 2, ParentSnapshotID: 0, TimestampMs: ms(fresh)},
 				},
 			},
-			policy:  config.SnapshotExpiry{Enabled: true, MinSnapshotsToKeep: 10, MaxSnapshotAgeHours: 120},
+			policy:  config.SnapshotExpiry{Enabled: testutil.BoolPtr(true), MinSnapshotsToKeep: 10, MaxSnapshotAgeHours: 120},
 			wantIDs: nil,
 		},
 	}
@@ -238,7 +238,7 @@ func TestSelectExpired(t *testing.T) {
 // --- ExecuteExpiry integration tests ---
 
 func policy120() config.SnapshotExpiry {
-	return config.SnapshotExpiry{Enabled: true, MinSnapshotsToKeep: 1, MaxSnapshotAgeHours: 120}
+	return config.SnapshotExpiry{Enabled: testutil.BoolPtr(true), MinSnapshotsToKeep: 1, MaxSnapshotAgeHours: 120}
 }
 
 func TestExecuteExpiry_DisabledPolicy(t *testing.T) {
@@ -247,7 +247,7 @@ func TestExecuteExpiry_DisabledPolicy(t *testing.T) {
 		Snapshots:         []iceberg.Snapshot{{SnapshotID: 1, TimestampMs: ms(time.Now().Add(-1000 * time.Hour))}},
 	}}
 	e := NewEngine(cat, testutil.NewMemStorage(nil))
-	result, err := e.ExecuteExpiry(context.Background(), tableID, config.SnapshotExpiry{Enabled: false})
+	result, err := e.ExecuteExpiry(context.Background(), tableID, config.SnapshotExpiry{Enabled: testutil.BoolPtr(false)})
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.ExpiredSnapshots)
 	assert.Equal(t, 0, cat.commitCalls)

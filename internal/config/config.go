@@ -8,11 +8,11 @@ import (
 )
 
 type Config struct {
-	Debug      bool              `yaml:"debug"`
-	Catalog    CatalogConfig     `yaml:"catalog"`
-	Storage    StorageConfig     `yaml:"storage"`
+	Debug       bool              `yaml:"debug"`
+	Catalog     CatalogConfig     `yaml:"catalog"`
+	Storage     StorageConfig     `yaml:"storage"`
 	Maintenance MaintenanceConfig `yaml:"maintenance"`
-	Scheduler  SchedulerConfig   `yaml:"scheduler"`
+	Scheduler   SchedulerConfig   `yaml:"scheduler"`
 }
 
 type CatalogConfig struct {
@@ -43,31 +43,42 @@ type MaintenanceConfig struct {
 }
 
 type PolicyConfig struct {
-	Compaction    CompactionPolicy    `yaml:"compaction"`
-	SnapshotExpiry SnapshotExpiry     `yaml:"snapshot_expiry"`
-	OrphanCleanup OrphanCleanupPolicy `yaml:"orphan_cleanup"`
+	Compaction     CompactionPolicy    `yaml:"compaction"`
+	SnapshotExpiry SnapshotExpiry      `yaml:"snapshot_expiry"`
+	OrphanCleanup  OrphanCleanupPolicy `yaml:"orphan_cleanup"`
 }
 
 type CompactionPolicy struct {
-	Enabled          bool     `yaml:"enabled"`
-	Strategy         string   `yaml:"strategy"` // binpack | sort | z-order
-	TargetFileSizeMB int      `yaml:"target_file_size_mb"`
-	MinFileCount     int      `yaml:"min_file_count"`
-	MinFileAgeMinutes int     `yaml:"min_file_age_minutes"`
-	SortKeys         []string `yaml:"sort_keys"`
-	ZOrderColumns    []string `yaml:"z_order_columns"`
+	// Enabled uses *bool so that absent YAML field (nil) is distinguishable from
+	// explicit "enabled: false", allowing overrides to disable a default-enabled policy.
+	Enabled           *bool    `yaml:"enabled"`
+	Strategy          string   `yaml:"strategy"` // binpack | sort | z-order
+	TargetFileSizeMB  int      `yaml:"target_file_size_mb"`
+	MinFileCount      int      `yaml:"min_file_count"`
+	MinFileAgeMinutes int      `yaml:"min_file_age_minutes"`
+	SortKeys          []string `yaml:"sort_keys"`
+	ZOrderColumns     []string `yaml:"z_order_columns"`
 }
+
+// IsEnabled reports whether compaction is enabled. Returns false if Enabled is nil.
+func (p CompactionPolicy) IsEnabled() bool { return p.Enabled != nil && *p.Enabled }
 
 type SnapshotExpiry struct {
-	Enabled              bool `yaml:"enabled"`
-	MinSnapshotsToKeep   int  `yaml:"min_snapshots_to_keep"`
-	MaxSnapshotAgeHours  int  `yaml:"max_snapshot_age_hours"`
+	Enabled             *bool `yaml:"enabled"`
+	MinSnapshotsToKeep  int   `yaml:"min_snapshots_to_keep"`
+	MaxSnapshotAgeHours int   `yaml:"max_snapshot_age_hours"`
 }
 
+// IsEnabled reports whether snapshot expiry is enabled. Returns false if Enabled is nil.
+func (p SnapshotExpiry) IsEnabled() bool { return p.Enabled != nil && *p.Enabled }
+
 type OrphanCleanupPolicy struct {
-	Enabled           bool `yaml:"enabled"`
-	GracePeriodHours  int  `yaml:"grace_period_hours"`
+	Enabled          *bool `yaml:"enabled"`
+	GracePeriodHours int   `yaml:"grace_period_hours"`
 }
+
+// IsEnabled reports whether orphan cleanup is enabled. Returns false if Enabled is nil.
+func (p OrphanCleanupPolicy) IsEnabled() bool { return p.Enabled != nil && *p.Enabled }
 
 type SchedulerConfig struct {
 	Interval          string `yaml:"interval"`
@@ -96,6 +107,8 @@ func Load(path string) (*Config, error) {
 	return &cfg, nil
 }
 
+func boolPtr(b bool) *bool { return &b }
+
 func applyDefaults(cfg *Config) {
 	if cfg.Scheduler.Interval == "" {
 		cfg.Scheduler.Interval = "5m"
@@ -108,6 +121,9 @@ func applyDefaults(cfg *Config) {
 	}
 
 	d := &cfg.Maintenance.Defaults
+	if d.Compaction.Enabled == nil {
+		d.Compaction.Enabled = boolPtr(false)
+	}
 	if d.Compaction.TargetFileSizeMB == 0 {
 		d.Compaction.TargetFileSizeMB = 512
 	}
@@ -117,11 +133,17 @@ func applyDefaults(cfg *Config) {
 	if d.Compaction.MinFileAgeMinutes == 0 {
 		d.Compaction.MinFileAgeMinutes = 60
 	}
+	if d.SnapshotExpiry.Enabled == nil {
+		d.SnapshotExpiry.Enabled = boolPtr(false)
+	}
 	if d.SnapshotExpiry.MinSnapshotsToKeep == 0 {
 		d.SnapshotExpiry.MinSnapshotsToKeep = 5
 	}
 	if d.SnapshotExpiry.MaxSnapshotAgeHours == 0 {
 		d.SnapshotExpiry.MaxSnapshotAgeHours = 120
+	}
+	if d.OrphanCleanup.Enabled == nil {
+		d.OrphanCleanup.Enabled = boolPtr(false)
 	}
 	if d.OrphanCleanup.GracePeriodHours == 0 {
 		d.OrphanCleanup.GracePeriodHours = 24

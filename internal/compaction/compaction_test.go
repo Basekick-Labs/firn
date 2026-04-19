@@ -80,7 +80,7 @@ func TestFindCandidates_EmptyTable(t *testing.T) {
 	engine := NewEngine(&mockCatalog{meta: &iceberg.TableMetadata{}}, testutil.NewMemStorage(nil), &config.Config{})
 	candidates, err := engine.FindCandidates(context.Background(),
 		catalog.TableIdentifier{Namespace: "ns", Name: "tbl"},
-		config.CompactionPolicy{Enabled: true, MinFileCount: 2, MinFileAgeMinutes: 0},
+		config.CompactionPolicy{Enabled: testutil.BoolPtr(true), MinFileCount: 2, MinFileAgeMinutes: 0},
 	)
 	require.NoError(t, err)
 	assert.Empty(t, candidates)
@@ -123,7 +123,7 @@ func TestFindCandidates_TwoPartitionsOneEligible(t *testing.T) {
 	engine := NewEngine(&mockCatalog{meta: meta}, stor, &config.Config{})
 	candidates, err := engine.FindCandidates(context.Background(),
 		catalog.TableIdentifier{Namespace: "ns", Name: "tbl"},
-		config.CompactionPolicy{Enabled: true, MinFileCount: 2, MinFileAgeMinutes: 60},
+		config.CompactionPolicy{Enabled: testutil.BoolPtr(true), MinFileCount: 2, MinFileAgeMinutes: 60},
 	)
 	require.NoError(t, err)
 	require.Len(t, candidates, 1)
@@ -159,7 +159,7 @@ func TestFindCandidates_AgeFilter(t *testing.T) {
 	engine := NewEngine(&mockCatalog{meta: meta}, stor, &config.Config{})
 	candidates, err := engine.FindCandidates(context.Background(),
 		catalog.TableIdentifier{Namespace: "ns", Name: "tbl"},
-		config.CompactionPolicy{Enabled: true, MinFileCount: 2, MinFileAgeMinutes: 60},
+		config.CompactionPolicy{Enabled: testutil.BoolPtr(true), MinFileCount: 2, MinFileAgeMinutes: 60},
 	)
 	require.NoError(t, err)
 	assert.Empty(t, candidates, "files too new should not be candidates")
@@ -169,7 +169,7 @@ func TestFindCandidates_DisabledPolicy(t *testing.T) {
 	engine := NewEngine(&mockCatalog{meta: &iceberg.TableMetadata{}}, testutil.NewMemStorage(nil), &config.Config{})
 	candidates, err := engine.FindCandidates(context.Background(),
 		catalog.TableIdentifier{Namespace: "ns", Name: "tbl"},
-		config.CompactionPolicy{Enabled: false},
+		config.CompactionPolicy{Enabled: testutil.BoolPtr(false)},
 	)
 	require.NoError(t, err)
 	assert.Empty(t, candidates)
@@ -181,7 +181,7 @@ func TestFindCandidates_SortStrategyRequiresSortKeys(t *testing.T) {
 	engine := NewEngine(&panicCatalog{}, testutil.NewMemStorage(nil), &config.Config{})
 	_, err := engine.FindCandidates(context.Background(),
 		catalog.TableIdentifier{Namespace: "ns", Name: "tbl"},
-		config.CompactionPolicy{Enabled: true, Strategy: "sort", SortKeys: nil},
+		config.CompactionPolicy{Enabled: testutil.BoolPtr(true), Strategy: "sort", SortKeys: nil},
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "sort_key")
@@ -233,7 +233,7 @@ func TestFindCandidates_DeleteManifestSkipped(t *testing.T) {
 	engine := NewEngine(&mockCatalog{meta: meta}, stor, &config.Config{})
 	candidates, err := engine.FindCandidates(context.Background(),
 		catalog.TableIdentifier{Namespace: "ns", Name: "tbl"},
-		config.CompactionPolicy{Enabled: true, MinFileCount: 1, MinFileAgeMinutes: 0},
+		config.CompactionPolicy{Enabled: testutil.BoolPtr(true), MinFileCount: 1, MinFileAgeMinutes: 0},
 	)
 	require.NoError(t, err)
 	assert.Empty(t, candidates, "delete manifests should be skipped")

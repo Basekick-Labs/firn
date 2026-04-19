@@ -28,8 +28,8 @@ Goal: full S3 Tables feature parity for maintenance operations.
 - [x] Sort compaction strategy (ORDER BY sort keys)
 - [ ] Z-order compaction strategy
 - [ ] Adaptive batch splitting on OOM/segfault
-- [ ] Per-namespace policy overrides
-- [ ] Per-table policy overrides
+- [x] Per-namespace policy overrides
+- [x] Per-table policy overrides
 - [ ] Catalog support: Apache Polaris, Project Nessie
 - [ ] Storage backend: Google Cloud Storage, Azure Blob Storage
 - [ ] Prometheus metrics endpoint

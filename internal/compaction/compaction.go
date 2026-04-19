@@ -176,7 +176,7 @@ func (e *Engine) listDataFiles(ctx context.Context, meta *iceberg.TableMetadata,
 // selectCandidates groups files by partition and applies policy filters,
 // returning one Candidate per eligible partition group.
 func selectCandidates(id catalog.TableIdentifier, files []DataFileInfo, policy config.CompactionPolicy) []Candidate {
-	if !policy.Enabled || len(files) == 0 {
+	if !policy.IsEnabled() || len(files) == 0 {
 		return nil
 	}
 

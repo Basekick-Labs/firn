@@ -37,7 +37,7 @@ type Result struct {
 // are not referenced by the current Iceberg metadata and are older than the
 // configured grace period.
 func (e *Engine) ExecuteCleanup(ctx context.Context, id catalog.TableIdentifier, policy config.OrphanCleanupPolicy) (Result, error) {
-	if !policy.Enabled {
+	if !policy.IsEnabled() {
 		return Result{Table: id}, nil
 	}
 
