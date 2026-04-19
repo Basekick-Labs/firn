@@ -365,6 +365,24 @@ func downloadFile(ctx context.Context, stor storage.Backend, remotePath, localPa
 	return n, err
 }
 
+var sortKeyRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.]*$`)
+
+// buildOrderClause returns an ORDER BY clause with double-quoted identifiers, or "" if sortKeys is empty.
+// Returns an error if any key contains characters that are not safe column name characters.
+func buildOrderClause(sortKeys []string) (string, error) {
+	if len(sortKeys) == 0 {
+		return "", nil
+	}
+	quoted := make([]string, len(sortKeys))
+	for i, k := range sortKeys {
+		if !sortKeyRE.MatchString(k) {
+			return "", fmt.Errorf("invalid sort_key %q: must match [A-Za-z_][A-Za-z0-9_.]*", k)
+		}
+		quoted[i] = `"` + k + `"`
+	}
+	return "ORDER BY " + strings.Join(quoted, ", "), nil
+}
+
 func runDuckDB(localInputs []string, outputPath string, cfg SubprocessConfig) error {
 	db, err := sql.Open("duckdb", "")
 	if err != nil {
@@ -382,15 +400,15 @@ func runDuckDB(localInputs []string, outputPath string, cfg SubprocessConfig) er
 	}
 
 	// Build quoted list of local file paths.
-	quoted := make([]string, len(localInputs))
+	fileQuoted := make([]string, len(localInputs))
 	for i, p := range localInputs {
-		quoted[i] = "'" + strings.ReplaceAll(p, "'", "''") + "'"
+		fileQuoted[i] = "'" + strings.ReplaceAll(p, "'", "''") + "'"
 	}
-	inputList := "[" + strings.Join(quoted, ", ") + "]"
+	inputList := "[" + strings.Join(fileQuoted, ", ") + "]"
 
-	orderClause := ""
-	if len(cfg.SortKeys) > 0 {
-		orderClause = "ORDER BY " + strings.Join(cfg.SortKeys, ", ")
+	orderClause, err := buildOrderClause(cfg.SortKeys)
+	if err != nil {
+		return err
 	}
 
 	safeOutput := strings.ReplaceAll(outputPath, "'", "''")

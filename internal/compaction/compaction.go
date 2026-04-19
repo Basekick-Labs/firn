@@ -2,6 +2,7 @@ package compaction
 
 import (
 	"context"
+	"fmt"
 	"path"
 	"sync"
 	"time"
@@ -77,6 +78,10 @@ func NewEngine(cat catalog.Client, stor storage.Backend, cfg *config.Config) *En
 // FindCandidates reads the current snapshot's manifests and returns file groups
 // eligible for compaction according to the given policy.
 func (e *Engine) FindCandidates(ctx context.Context, id catalog.TableIdentifier, policy config.CompactionPolicy) ([]Candidate, error) {
+	if policy.Strategy == "sort" && len(policy.SortKeys) == 0 {
+		return nil, fmt.Errorf("sort compaction strategy requires at least one sort_key")
+	}
+
 	meta, err := e.catalog.LoadTable(ctx, id)
 	if err != nil {
 		return nil, err
@@ -201,4 +206,5 @@ func selectCandidates(id catalog.TableIdentifier, files []DataFileInfo, policy c
 	}
 	return candidates
 }
+
 
