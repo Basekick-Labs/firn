@@ -10,6 +10,7 @@ import (
 	"github.com/basekick-labs/firn/internal/compaction"
 	"github.com/basekick-labs/firn/internal/config"
 	"github.com/basekick-labs/firn/internal/expiry"
+	"github.com/basekick-labs/firn/internal/orphan"
 	"github.com/basekick-labs/firn/internal/policy"
 	"github.com/rs/zerolog/log"
 )
@@ -19,6 +20,7 @@ type Scheduler struct {
 	catalog  catalog.Client
 	engine   *compaction.Engine
 	expiry   *expiry.Engine
+	orphan   *orphan.Engine
 	policy   *policy.Resolver
 	cfg      *config.Config
 	interval time.Duration
@@ -44,6 +46,7 @@ func New(cfg *config.Config) (*Scheduler, error) {
 		catalog:  cat,
 		engine:   compaction.NewEngine(cat, stor, cfg),
 		expiry:   expiry.NewEngine(cat, stor),
+		orphan:   orphan.NewEngine(cat, stor),
 		policy:   policy.NewResolver(&cfg.Maintenance),
 		cfg:      cfg,
 		interval: interval,
@@ -157,5 +160,18 @@ func (s *Scheduler) maintain(ctx context.Context, id catalog.TableIdentifier) {
 		}
 	}
 
-	// TODO: orphan cleanup
+	if p.OrphanCleanup.Enabled {
+		result, err := s.orphan.ExecuteCleanup(ctx, id, p.OrphanCleanup)
+		if err != nil {
+			log.Error().Err(err).Str("table", id.String()).Msg("orphan cleanup failed")
+		} else if result.DeletedFiles > 0 {
+			log.Info().
+				Str("table", id.String()).
+				Int("scanned", result.ScannedFiles).
+				Int("deleted", result.DeletedFiles).
+				Int("skipped", result.SkippedFiles).
+				Dur("duration", result.Duration).
+				Msg("orphan cleanup complete")
+		}
+	}
 }
