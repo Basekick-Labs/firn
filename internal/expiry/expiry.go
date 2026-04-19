@@ -101,7 +101,7 @@ func (e *Engine) ExecuteExpiry(ctx context.Context, id catalog.TableIdentifier, 
 // The result is further clamped so that at least MinSnapshotsToKeep snapshots
 // remain in the table after deletion.
 func SelectExpired(meta *iceberg.TableMetadata, policy config.SnapshotExpiry, now time.Time) []int64 {
-	if !policy.Enabled || len(meta.Snapshots) == 0 {
+	if !policy.IsEnabled() || len(meta.Snapshots) == 0 {
 		return nil
 	}
 

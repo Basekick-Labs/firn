@@ -39,11 +39,20 @@ func (r *Resolver) For(id catalog.TableIdentifier) config.PolicyConfig {
 	return r.cfg.Defaults
 }
 
-// merge applies overrides on top of base. Zero values in override are ignored
+// mergeEnabled returns override if explicitly set (non-nil), otherwise base.
+func mergeEnabled(base, override *bool) *bool {
+	if override != nil {
+		return override
+	}
+	return base
+}
+
+// merge applies overrides on top of base. Zero/nil values in override are ignored
 // so that partial namespace/table configs don't zero out defaults.
 func merge(base, override config.PolicyConfig) config.PolicyConfig {
 	result := base
 
+	result.Compaction.Enabled = mergeEnabled(base.Compaction.Enabled, override.Compaction.Enabled)
 	if override.Compaction.Strategy != "" {
 		result.Compaction.Strategy = override.Compaction.Strategy
 	}
@@ -62,25 +71,18 @@ func merge(base, override config.PolicyConfig) config.PolicyConfig {
 	if len(override.Compaction.ZOrderColumns) > 0 {
 		result.Compaction.ZOrderColumns = override.Compaction.ZOrderColumns
 	}
-	if override.Compaction.Enabled {
-		result.Compaction.Enabled = true
-	}
 
+	result.SnapshotExpiry.Enabled = mergeEnabled(base.SnapshotExpiry.Enabled, override.SnapshotExpiry.Enabled)
 	if override.SnapshotExpiry.MinSnapshotsToKeep != 0 {
 		result.SnapshotExpiry.MinSnapshotsToKeep = override.SnapshotExpiry.MinSnapshotsToKeep
 	}
 	if override.SnapshotExpiry.MaxSnapshotAgeHours != 0 {
 		result.SnapshotExpiry.MaxSnapshotAgeHours = override.SnapshotExpiry.MaxSnapshotAgeHours
 	}
-	if override.SnapshotExpiry.Enabled {
-		result.SnapshotExpiry.Enabled = true
-	}
 
+	result.OrphanCleanup.Enabled = mergeEnabled(base.OrphanCleanup.Enabled, override.OrphanCleanup.Enabled)
 	if override.OrphanCleanup.GracePeriodHours != 0 {
 		result.OrphanCleanup.GracePeriodHours = override.OrphanCleanup.GracePeriodHours
-	}
-	if override.OrphanCleanup.Enabled {
-		result.OrphanCleanup.Enabled = true
 	}
 
 	return result

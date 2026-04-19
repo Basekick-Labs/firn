@@ -200,13 +200,25 @@ maintenance:
       enabled: true
       grace_period_hours: 24
 
-  # Per-namespace overrides
+  # Per-namespace overrides — only the specified fields are overridden;
+  # unspecified fields inherit from defaults.
+  # Note: namespace and table overrides each merge against the global defaults
+  # independently — a table override does NOT layer on top of a namespace override.
   namespaces:
     analytics:
       compaction:
         strategy: sort
         sort_keys: ["event_time", "user_id"]
         target_file_size_mb: 1024
+
+    # Disable all maintenance for the archive namespace.
+    archive:
+      compaction:
+        enabled: false
+      snapshot_expiry:
+        enabled: false
+      orphan_cleanup:
+        enabled: false
 
   # Per-table overrides
   tables:

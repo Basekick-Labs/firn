@@ -117,3 +117,6 @@ func (m *MemStorage) StatFile(_ context.Context, path string) (int64, error) {
 	}
 	return int64(len(data)), nil
 }
+
+// BoolPtr returns a pointer to b. Used in tests to construct *bool config fields.
+func BoolPtr(b bool) *bool { return &b }
