@@ -5,18 +5,18 @@
 Goal: compaction working end-to-end against Lakekeeper + MinIO. Proves the
 core loop. Not production-ready but demonstrable.
 
-- [ ] Go module scaffold (`cmd/firn`, `cmd/compact`, `internal/...`)
-- [ ] Storage backend: S3-compatible (AWS S3, MinIO, R2)
+- [x] Go module scaffold (`cmd/firn`, `cmd/compact`, `internal/...`)
+- [x] Storage backend: S3-compatible (AWS S3, MinIO, R2)
 - [x] Iceberg metadata parsing: `metadata.json`, manifest list, manifests (Avro)
 - [x] Catalog client: Lakekeeper REST API (table load, transaction commit)
 - [ ] Catalog client: AWS Glue (Iceberg REST endpoint)
 - [x] Compaction candidate selection from Iceberg manifests
-- [ ] DuckDB compaction query (binpack strategy, subprocess-isolated)
-- [ ] Crash-recovery manifest (write before upload, recover on restart)
-- [ ] Atomic snapshot commit via catalog
-- [ ] Config file loading (YAML)
-- [ ] Scheduler loop (fixed interval)
-- [ ] Basic logging (structured, zerolog)
+- [x] DuckDB compaction query (binpack strategy, subprocess-isolated)
+- [x] Crash-recovery manifest (write before upload, recover on restart)
+- [x] Atomic snapshot commit via catalog
+- [x] Config file loading (YAML)
+- [x] Scheduler loop (fixed interval)
+- [x] Basic logging (structured, zerolog)
 - [ ] Docker image
 
 ## v0.2 — Maintenance Complete

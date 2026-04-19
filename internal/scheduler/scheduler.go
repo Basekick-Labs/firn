@@ -122,7 +122,21 @@ func (s *Scheduler) maintain(ctx context.Context, id catalog.TableIdentifier) {
 			return
 		}
 		log.Debug().Str("table", id.String()).Int("candidates", len(candidates)).Msg("compaction candidates")
-		// TODO: execute compaction jobs for each candidate
+		for _, c := range candidates {
+			result, err := s.engine.ExecuteJob(ctx, c)
+			if err != nil {
+				log.Error().Err(err).Str("table", id.String()).Str("partition", c.Partition).Msg("compaction job failed")
+				continue
+			}
+			log.Info().
+				Str("table", id.String()).
+				Str("partition", c.Partition).
+				Int("files_merged", len(result.InputFiles)).
+				Int64("bytes_before", result.BytesBefore).
+				Int64("bytes_after", result.BytesAfter).
+				Dur("duration", result.Duration).
+				Msg("compaction complete")
+		}
 	}
 
 	// TODO: snapshot expiry

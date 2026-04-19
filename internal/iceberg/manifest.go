@@ -13,7 +13,7 @@ import (
 // ReadManifestList reads the Avro OCF manifest list at the given URI and
 // returns all data ManifestFile entries (delete manifests are excluded).
 func ReadManifestList(ctx context.Context, stor storage.Backend, uri string) ([]ManifestFile, error) {
-	path, err := uriToPath(uri)
+	path, err := URIToPath(uri)
 	if err != nil {
 		return nil, fmt.Errorf("manifest list URI %s: %w", uri, err)
 	}
@@ -49,7 +49,7 @@ func ReadManifestList(ctx context.Context, stor storage.Backend, uri string) ([]
 // ReadManifest reads an Avro OCF manifest file at the given URI and returns
 // all non-deleted ManifestEntry records (status == EntryStatusDeleted excluded).
 func ReadManifest(ctx context.Context, stor storage.Backend, uri string) ([]ManifestEntry, error) {
-	path, err := uriToPath(uri)
+	path, err := URIToPath(uri)
 	if err != nil {
 		return nil, fmt.Errorf("manifest URI %s: %w", uri, err)
 	}
@@ -82,10 +82,10 @@ func ReadManifest(ctx context.Context, stor storage.Backend, uri string) ([]Mani
 	return results, nil
 }
 
-// uriToPath converts a full storage URI (s3://bucket/key) to a
+// URIToPath converts a full storage URI (s3://bucket/key) to a
 // storage-backend-relative key (path component, leading slash stripped).
 // Returns an error if the resulting key is empty.
-func uriToPath(uri string) (string, error) {
+func URIToPath(uri string) (string, error) {
 	if !strings.Contains(uri, "://") {
 		return uri, nil
 	}

@@ -142,7 +142,7 @@ interop). No AWS account required.
 
 | Catalog | Status |
 |---|---|
-| [Lakekeeper](https://github.com/lakekeeper/lakekeeper) | Planned (v0.1) |
+| [Lakekeeper](https://github.com/lakekeeper/lakekeeper) | ✅ Implemented |
 | AWS Glue | Planned (v0.1) |
 | Apache Polaris | Planned (v0.2) |
 | Project Nessie | Planned (v0.2) |
@@ -153,11 +153,11 @@ interop). No AWS account required.
 
 | Backend | Status |
 |---|---|
-| AWS S3 | Planned (v0.1) |
-| MinIO | Planned (v0.1) |
-| Cloudflare R2 | Planned (v0.1) |
-| Tigris | Planned (v0.1) |
-| Ceph (S3-compatible) | Planned (v0.1) |
+| AWS S3 | ✅ Implemented |
+| MinIO | ✅ Implemented |
+| Cloudflare R2 | ✅ Implemented |
+| Tigris | ✅ Implemented |
+| Ceph (S3-compatible) | ✅ Implemented |
 | Google Cloud Storage | Planned (v0.2) |
 | Azure Blob Storage | Planned (v0.2) |
 
@@ -286,8 +286,12 @@ Apache License 2.0. See [LICENSE](LICENSE).
 
 ## Status
 
-Firn is in early design phase. The architecture is defined, foundational
-decisions are made, and implementation is beginning. Not yet suitable for
-production use.
+Firn is in active development (pre-v0.1). The core compaction pipeline is
+implemented end-to-end: Iceberg manifest walking, DuckDB-based file merging
+(subprocess-isolated), crash-recovery manifests, and atomic snapshot commits
+via Lakekeeper. S3-compatible storage and config-driven scheduling are working.
 
-Follow the project or open an issue to contribute to the design.
+Not yet suitable for production use. Docker image, AWS Glue catalog support,
+snapshot expiry, and orphan cleanup are next.
+
+Open an issue or follow the project to contribute.

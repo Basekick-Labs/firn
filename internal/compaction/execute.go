@@ -1,0 +1,406 @@
+package compaction
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/basekick-labs/firn/internal/catalog"
+	"github.com/basekick-labs/firn/internal/iceberg"
+	"github.com/basekick-labs/firn/internal/storage"
+	_ "github.com/duckdb/duckdb-go/v2"
+	"github.com/google/uuid"
+	"github.com/rs/zerolog/log"
+)
+
+var memoryLimitRE = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?\s*(B|KB|MB|GB|TB)$`)
+
+// ExecuteJob runs a full compaction job for a candidate:
+//  1. Writes a crash-recovery manifest
+//  2. Spawns the compact subprocess (DuckDB merge)
+//  3. Writes Iceberg manifest + manifest list to storage
+//  4. Commits a new snapshot via the catalog
+//  5. Deletes input files and removes the recovery manifest
+//
+// Iceberg v2 sequence numbers are not yet managed by this implementation;
+// only v1-compatible tables (no row-level deletes) are safe to compact.
+func (e *Engine) ExecuteJob(ctx context.Context, c Candidate) (Result, error) {
+	start := time.Now()
+
+	meta, err := e.catalog.LoadTable(ctx, c.Table)
+	if err != nil {
+		return Result{}, fmt.Errorf("load table: %w", err)
+	}
+	currentSnap := meta.CurrentSnapshot()
+	var currentSnapshotID int64
+	if currentSnap != nil {
+		currentSnapshotID = currentSnap.SnapshotID
+	}
+
+	tableLocation := strings.TrimRight(meta.Location, "/")
+	jobID := uuid.New().String()
+	newSnapshotID := time.Now().UnixMilli()
+
+	// Full URIs for Iceberg metadata references (stored in manifests/snapshots).
+	outputURI := tableLocation + "/data/compacted/" + jobID + ".parquet"
+	manifestURI := tableLocation + "/metadata/snap-" + jobID + ".avro"
+	manifestListURI := tableLocation + "/metadata/snap-" + jobID + "-ml.avro"
+	recoveryURI := tableLocation + "/.firn/recovery/" + jobID + ".json"
+
+	// Storage-relative keys for actual read/write operations.
+	outputKey, err := iceberg.URIToPath(outputURI)
+	if err != nil {
+		return Result{}, fmt.Errorf("resolve output path: %w", err)
+	}
+	manifestKey, err := iceberg.URIToPath(manifestURI)
+	if err != nil {
+		return Result{}, fmt.Errorf("resolve manifest path: %w", err)
+	}
+	manifestListKey, err := iceberg.URIToPath(manifestListURI)
+	if err != nil {
+		return Result{}, fmt.Errorf("resolve manifest list path: %w", err)
+	}
+	recoveryKey, err := iceberg.URIToPath(recoveryURI)
+	if err != nil {
+		return Result{}, fmt.Errorf("resolve recovery path: %w", err)
+	}
+
+	inputPaths := make([]string, len(c.Files))
+	var bytesBefore int64
+	for i, f := range c.Files {
+		inputPaths[i] = f.Path
+		bytesBefore += f.SizeBytes
+	}
+
+	bucket, err := bucketFromURI(tableLocation)
+	if err != nil {
+		return Result{}, fmt.Errorf("extract bucket from table location: %w", err)
+	}
+	storCfgJSON, err := e.storageConfigJSON(bucket)
+	if err != nil {
+		return Result{}, err
+	}
+
+	// Step 1: Write crash-recovery manifest before any upload.
+	// NOTE: if the process crashes after upload but before writeRecovery(uploaded)
+	// succeeds, the recovery file will still say "pending" and recoverOne will
+	// discard the job. This is a known limitation: the compacted output will be
+	// orphaned in storage until orphan cleanup runs.
+	rm := RecoveryManifest{
+		JobID:            jobID,
+		Table:            c.Table.String(),
+		InputFiles:       inputPaths,
+		OutputFile:       outputURI,
+		ManifestPath:     manifestURI,
+		ManifestListPath: manifestListURI,
+		ParentSnapshotID: currentSnapshotID,
+		NewSnapshotID:    newSnapshotID,
+		State:            recoveryStatePending,
+		CreatedAt:        time.Now().UTC().Format(time.RFC3339),
+	}
+	if err := writeRecovery(ctx, e.storage, recoveryKey, rm); err != nil {
+		return Result{}, err
+	}
+
+	// Step 2: Spawn compact subprocess.
+	tempDir, err := os.MkdirTemp("", "firn-compact-"+jobID+"-")
+	if err != nil {
+		return Result{}, fmt.Errorf("create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	subCfg := SubprocessConfig{
+		JobID:         jobID,
+		InputFiles:    inputPaths,
+		OutputPath:    outputURI,
+		SortKeys:      c.Policy.SortKeys,
+		Strategy:      c.Policy.Strategy,
+		MemoryLimit:   e.cfg.Scheduler.MemoryLimit,
+		StorageType:   e.cfg.Storage.Type,
+		StorageConfig: storCfgJSON,
+		TempDir:       tempDir,
+	}
+
+	subResult, err := spawnSubprocess(ctx, subCfg)
+	if err != nil {
+		return Result{}, fmt.Errorf("compact subprocess: %w", err)
+	}
+	if !subResult.Success {
+		return Result{}, fmt.Errorf("compact subprocess error: %s", subResult.Error)
+	}
+
+	// Step 3: Update recovery manifest — output uploaded.
+	rm.State = recoveryStateUploaded
+	if err := writeRecovery(ctx, e.storage, recoveryKey, rm); err != nil {
+		log.Warn().Err(err).Str("job_id", jobID).Msg("failed to update recovery manifest to uploaded")
+	}
+
+	// Step 4: Write Iceberg manifest + manifest list (storage-relative keys).
+	outputEntry := iceberg.ManifestEntry{
+		Status:   iceberg.EntryStatusAdded,
+		DataFile: iceberg.DataFile{FilePath: outputKey, FileFormat: "PARQUET", FileSizeBytes: subResult.OutputSize},
+	}
+	if err := iceberg.WriteManifest(ctx, e.storage, manifestKey, []iceberg.ManifestEntry{outputEntry}); err != nil {
+		return Result{}, err
+	}
+
+	manifestFile := buildManifestFile(manifestURI, newSnapshotID, []iceberg.ManifestEntry{outputEntry})
+	if err := iceberg.WriteManifestList(ctx, e.storage, manifestListKey, []iceberg.ManifestFile{manifestFile}); err != nil {
+		return Result{}, err
+	}
+
+	// Step 5: Commit snapshot (retry on conflict).
+	// snap.ParentSnapshotID is updated inside commitWithRetry on each conflict retry.
+	snap := buildSnapshot(newSnapshotID, currentSnapshotID, manifestListURI)
+	if err := e.commitWithRetry(ctx, c.Table, currentSnapshotID, &snap); err != nil {
+		return Result{}, err
+	}
+
+	// Step 6: Mark snapshot committed.
+	rm.State = recoveryStateSnapshotCommitted
+	if err := writeRecovery(ctx, e.storage, recoveryKey, rm); err != nil {
+		log.Warn().Err(err).Str("job_id", jobID).Msg("failed to update recovery manifest to snapshot_committed")
+	}
+
+	// Step 7: Delete input files.
+	deleteInputFiles(ctx, e.storage, inputPaths)
+
+	// Step 8: Delete recovery manifest.
+	if err := deleteRecovery(ctx, e.storage, recoveryKey); err != nil {
+		log.Warn().Err(err).Str("job_id", jobID).Msg("failed to delete recovery manifest")
+	}
+
+	return Result{
+		Table:       c.Table,
+		Partition:   c.Partition,
+		InputFiles:  inputPaths,
+		OutputFile:  outputURI,
+		OutputSize:  subResult.OutputSize,
+		BytesBefore: bytesBefore,
+		BytesAfter:  subResult.OutputSize,
+		Duration:    time.Since(start),
+	}, nil
+}
+
+// commitWithRetry commits a new snapshot, retrying up to 3 times on ErrConflict.
+// On each conflict it reloads the table to get the current snapshot ID and updates
+// snap.ParentSnapshotID. snap.SnapshotID is intentionally not changed between
+// retries — it must remain unique for the lifetime of the table.
+func (e *Engine) commitWithRetry(ctx context.Context, tableID catalog.TableIdentifier, currentSnapshotID int64, snap *iceberg.Snapshot) error {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		tx := catalog.Transaction{
+			Requirements: []catalog.Requirement{{Type: "assert-current-snapshot-id", CurrentSnapshotID: currentSnapshotID}},
+			Updates: []catalog.Update{
+				{Type: "add-snapshot", Snapshot: snap},
+				{Type: "set-snapshot-ref", RefName: "main", SnapshotIDs: []int64{snap.SnapshotID}},
+			},
+		}
+		lastErr = e.catalog.CommitTransaction(ctx, tableID, tx)
+		if lastErr == nil {
+			return nil
+		}
+		var conflict catalog.ErrConflict
+		if !errors.As(lastErr, &conflict) {
+			return lastErr
+		}
+		// Reload to get the fresh current snapshot ID for the next attempt.
+		meta, err := e.catalog.LoadTable(ctx, tableID)
+		if err != nil {
+			return err
+		}
+		if s := meta.CurrentSnapshot(); s != nil {
+			currentSnapshotID = s.SnapshotID
+			snap.ParentSnapshotID = currentSnapshotID
+		}
+	}
+	return fmt.Errorf("commit failed after 3 attempts: %w", lastErr)
+}
+
+// storageConfigJSON serialises the storage credentials for the subprocess.
+// bucket is extracted from the table location URI.
+func (e *Engine) storageConfigJSON(bucket string) (string, error) {
+	sc := storage.S3Config{
+		Bucket:          bucket,
+		Endpoint:        e.cfg.Storage.Endpoint,
+		Region:          e.cfg.Storage.Region,
+		AccessKeyID:     e.cfg.Storage.AccessKeyID,
+		SecretAccessKey: e.cfg.Storage.SecretAccessKey,
+		PathStyle:       e.cfg.Storage.PathStyle,
+	}
+	data, err := json.Marshal(sc)
+	if err != nil {
+		return "", fmt.Errorf("marshal storage config: %w", err)
+	}
+	return string(data), nil
+}
+
+// bucketFromURI extracts the S3 bucket name from a URI like s3://bucket/prefix.
+// For non-URI paths the empty string is returned (local/relative storage).
+func bucketFromURI(uri string) (string, error) {
+	if !strings.Contains(uri, "://") {
+		return "", nil
+	}
+	u, err := url.Parse(uri)
+	if err != nil {
+		return "", err
+	}
+	if u.Host == "" {
+		return "", fmt.Errorf("no bucket in URI %q", uri)
+	}
+	return u.Host, nil
+}
+
+// spawnSubprocess runs the compact subcommand as a child process, passing
+// SubprocessConfig via stdin and reading SubprocessResult from stdout.
+func spawnSubprocess(ctx context.Context, cfg SubprocessConfig) (SubprocessResult, error) {
+	execPath, err := os.Executable()
+	if err != nil {
+		return SubprocessResult{}, fmt.Errorf("resolve executable: %w", err)
+	}
+
+	cfgData, err := json.Marshal(cfg)
+	if err != nil {
+		return SubprocessResult{}, fmt.Errorf("marshal subprocess config: %w", err)
+	}
+
+	cmd := exec.CommandContext(ctx, execPath, "compact")
+	cmd.Stdin = bytes.NewReader(cfgData)
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return SubprocessResult{}, fmt.Errorf("subprocess exited: %w", err)
+	}
+
+	var result SubprocessResult
+	if err := json.NewDecoder(&stdout).Decode(&result); err != nil {
+		return SubprocessResult{}, fmt.Errorf("decode subprocess result: %w", err)
+	}
+	return result, nil
+}
+
+// RunSubprocess is the entrypoint called by cmd/compact (the child process).
+// It downloads inputs, merges via DuckDB, and uploads the output.
+func RunSubprocess(cfg SubprocessConfig) SubprocessResult {
+	ctx := context.Background()
+
+	stor, err := storage.FromConfig(ctx, cfg.StorageType, cfg.StorageConfig)
+	if err != nil {
+		return SubprocessResult{Error: fmt.Sprintf("init storage: %s", err)}
+	}
+
+	// Download each input file to tempDir.
+	localInputs := make([]string, 0, len(cfg.InputFiles))
+	var bytesBefore int64
+	for _, remotePath := range cfg.InputFiles {
+		localPath := filepath.Join(cfg.TempDir, filepath.Base(remotePath))
+		size, err := downloadFile(ctx, stor, remotePath, localPath)
+		if err != nil {
+			return SubprocessResult{Error: fmt.Sprintf("download %s: %s", remotePath, err)}
+		}
+		localInputs = append(localInputs, localPath)
+		bytesBefore += size
+	}
+
+	localOutput := filepath.Join(cfg.TempDir, "output.parquet")
+	if err := runDuckDB(localInputs, localOutput, cfg); err != nil {
+		return SubprocessResult{Error: fmt.Sprintf("duckdb: %s", err)}
+	}
+
+	// Upload output.
+	f, err := os.Open(localOutput)
+	if err != nil {
+		return SubprocessResult{Error: fmt.Sprintf("open output: %s", err)}
+	}
+	defer f.Close()
+
+	fi, err := f.Stat()
+	if err != nil {
+		return SubprocessResult{Error: fmt.Sprintf("stat output: %s", err)}
+	}
+	outputSize := fi.Size()
+
+	outputKey, err := iceberg.URIToPath(cfg.OutputPath)
+	if err != nil {
+		return SubprocessResult{Error: fmt.Sprintf("resolve output path: %s", err)}
+	}
+	if err := stor.Write(ctx, outputKey, f, outputSize); err != nil {
+		return SubprocessResult{Error: fmt.Sprintf("upload output: %s", err)}
+	}
+
+	return SubprocessResult{Success: true, OutputSize: outputSize, BytesBefore: bytesBefore}
+}
+
+func downloadFile(ctx context.Context, stor storage.Backend, remotePath, localPath string) (int64, error) {
+	key, err := iceberg.URIToPath(remotePath)
+	if err != nil {
+		return 0, err
+	}
+	rc, err := stor.Read(ctx, key)
+	if err != nil {
+		return 0, err
+	}
+	defer rc.Close()
+
+	f, err := os.Create(localPath)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+
+	n, err := io.Copy(f, rc)
+	return n, err
+}
+
+func runDuckDB(localInputs []string, outputPath string, cfg SubprocessConfig) error {
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		return fmt.Errorf("open duckdb: %w", err)
+	}
+	defer db.Close()
+
+	if cfg.MemoryLimit != "" {
+		if !memoryLimitRE.MatchString(cfg.MemoryLimit) {
+			return fmt.Errorf("invalid memory_limit %q: must match [0-9]+(B|KB|MB|GB|TB)", cfg.MemoryLimit)
+		}
+		if _, err := db.Exec(fmt.Sprintf("SET memory_limit='%s'", cfg.MemoryLimit)); err != nil {
+			return fmt.Errorf("set memory_limit: %w", err)
+		}
+	}
+
+	// Build quoted list of local file paths.
+	quoted := make([]string, len(localInputs))
+	for i, p := range localInputs {
+		quoted[i] = "'" + strings.ReplaceAll(p, "'", "''") + "'"
+	}
+	inputList := "[" + strings.Join(quoted, ", ") + "]"
+
+	orderClause := ""
+	if len(cfg.SortKeys) > 0 {
+		orderClause = "ORDER BY " + strings.Join(cfg.SortKeys, ", ")
+	}
+
+	safeOutput := strings.ReplaceAll(outputPath, "'", "''")
+	query := fmt.Sprintf(
+		"COPY (SELECT * FROM read_parquet(%s, union_by_name=true) %s) TO '%s' (FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 3, ROW_GROUP_SIZE 122880)",
+		inputList, orderClause, safeOutput,
+	)
+
+	if _, err := db.Exec(query); err != nil {
+		return fmt.Errorf("copy query: %w", err)
+	}
+	return nil
+}

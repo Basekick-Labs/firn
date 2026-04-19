@@ -202,11 +202,3 @@ func selectCandidates(id catalog.TableIdentifier, files []DataFileInfo, policy c
 	return candidates
 }
 
-// RunSubprocess is the entrypoint called by cmd/compact.
-// It executes the DuckDB compaction job in-process (this IS the subprocess).
-func RunSubprocess(cfg SubprocessConfig) SubprocessResult {
-	// TODO: initialize storage backend from cfg.StorageConfig,
-	// download input files, run DuckDB COPY query, upload output.
-	_ = cfg
-	return SubprocessResult{Success: false, Error: "not yet implemented"}
-}
