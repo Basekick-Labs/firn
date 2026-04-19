@@ -9,6 +9,7 @@ import (
 	"github.com/basekick-labs/firn/internal/catalog"
 	"github.com/basekick-labs/firn/internal/compaction"
 	"github.com/basekick-labs/firn/internal/config"
+	"github.com/basekick-labs/firn/internal/expiry"
 	"github.com/basekick-labs/firn/internal/policy"
 	"github.com/rs/zerolog/log"
 )
@@ -17,6 +18,7 @@ import (
 type Scheduler struct {
 	catalog  catalog.Client
 	engine   *compaction.Engine
+	expiry   *expiry.Engine
 	policy   *policy.Resolver
 	cfg      *config.Config
 	interval time.Duration
@@ -41,6 +43,7 @@ func New(cfg *config.Config) (*Scheduler, error) {
 	return &Scheduler{
 		catalog:  cat,
 		engine:   compaction.NewEngine(cat, stor, cfg),
+		expiry:   expiry.NewEngine(cat, stor),
 		policy:   policy.NewResolver(&cfg.Maintenance),
 		cfg:      cfg,
 		interval: interval,
@@ -139,6 +142,20 @@ func (s *Scheduler) maintain(ctx context.Context, id catalog.TableIdentifier) {
 		}
 	}
 
-	// TODO: snapshot expiry
+	if p.SnapshotExpiry.Enabled {
+		result, err := s.expiry.ExecuteExpiry(ctx, id, p.SnapshotExpiry)
+		if err != nil {
+			log.Error().Err(err).Str("table", id.String()).Msg("snapshot expiry failed")
+		} else if result.ExpiredSnapshots > 0 {
+			log.Info().
+				Str("table", id.String()).
+				Int("expired_snapshots", result.ExpiredSnapshots).
+				Int("deleted_manifests", result.DeletedManifests).
+				Int("deleted_data_files", result.DeletedDataFiles).
+				Dur("duration", result.Duration).
+				Msg("snapshot expiry complete")
+		}
+	}
+
 	// TODO: orphan cleanup
 }
