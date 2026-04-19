@@ -9,7 +9,7 @@ core loop. Not production-ready but demonstrable.
 - [x] Storage backend: S3-compatible (AWS S3, MinIO, R2)
 - [x] Iceberg metadata parsing: `metadata.json`, manifest list, manifests (Avro)
 - [x] Catalog client: Lakekeeper REST API (table load, transaction commit)
-- [ ] Catalog client: AWS Glue (Iceberg REST endpoint)
+- [x] Catalog client: AWS Glue Data Catalog
 - [x] Compaction candidate selection from Iceberg manifests
 - [x] DuckDB compaction query (binpack strategy, subprocess-isolated)
 - [x] Crash-recovery manifest (write before upload, recover on restart)

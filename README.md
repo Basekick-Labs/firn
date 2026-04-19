@@ -143,7 +143,7 @@ interop). No AWS account required.
 | Catalog | Status |
 |---|---|
 | [Lakekeeper](https://github.com/lakekeeper/lakekeeper) | ✅ Implemented |
-| AWS Glue | Planned (v0.1) |
+| AWS Glue Data Catalog | ✅ Implemented |
 | Apache Polaris | Planned (v0.2) |
 | Project Nessie | Planned (v0.2) |
 
