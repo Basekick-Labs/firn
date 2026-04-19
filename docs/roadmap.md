@@ -17,7 +17,7 @@ core loop. Not production-ready but demonstrable.
 - [x] Config file loading (YAML)
 - [x] Scheduler loop (fixed interval)
 - [x] Basic logging (structured, zerolog)
-- [ ] Docker image
+- [x] Docker image (ghcr.io/basekick-labs/firn)
 
 ## v0.2 — Maintenance Complete
 

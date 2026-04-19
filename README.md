@@ -291,7 +291,6 @@ implemented end-to-end: Iceberg manifest walking, DuckDB-based file merging
 (subprocess-isolated), crash-recovery manifests, and atomic snapshot commits
 via Lakekeeper. S3-compatible storage and config-driven scheduling are working.
 
-Not yet suitable for production use. Docker image, AWS Glue catalog support,
-snapshot expiry, and orphan cleanup are next.
+Not yet suitable for production use. Snapshot expiry and orphan cleanup are next (v0.2).
 
 Open an issue or follow the project to contribute.
