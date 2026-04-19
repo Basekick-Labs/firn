@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/basekick-labs/firn/internal/storage/s3"
 )
@@ -19,6 +20,7 @@ type Backend interface {
 	Exists(ctx context.Context, path string) (bool, error)
 	List(ctx context.Context, prefix string) ([]string, error)
 	StatFile(ctx context.Context, path string) (int64, error)
+	ModTime(ctx context.Context, path string) (time.Time, error)
 }
 
 // S3Config is the JSON-serializable subset of s3 backend configuration

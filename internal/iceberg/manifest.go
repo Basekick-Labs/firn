@@ -12,7 +12,26 @@ import (
 
 // ReadManifestList reads the Avro OCF manifest list at the given URI and
 // returns all data ManifestFile entries (delete manifests are excluded).
+// Use ReadManifestListAll when delete manifests must also be included (e.g. orphan cleanup).
 func ReadManifestList(ctx context.Context, stor storage.Backend, uri string) ([]ManifestFile, error) {
+	all, err := ReadManifestListAll(ctx, stor, uri)
+	if err != nil {
+		return nil, err
+	}
+	results := all[:0]
+	for _, mf := range all {
+		if mf.Content != ManifestContentDeletes {
+			results = append(results, mf)
+		}
+	}
+	return results, nil
+}
+
+// ReadManifestListAll reads the Avro OCF manifest list at the given URI and
+// returns every ManifestFile entry regardless of content type (data and delete
+// manifests alike). Use this when building a complete live-file set, such as
+// during orphan cleanup.
+func ReadManifestListAll(ctx context.Context, stor storage.Backend, uri string) ([]ManifestFile, error) {
 	path, err := URIToPath(uri)
 	if err != nil {
 		return nil, fmt.Errorf("manifest list URI %s: %w", uri, err)
@@ -34,9 +53,6 @@ func ReadManifestList(ctx context.Context, stor storage.Backend, uri string) ([]
 		var mf ManifestFile
 		if err := dec.Decode(&mf); err != nil {
 			return nil, fmt.Errorf("decode manifest list entry %s: %w", path, err)
-		}
-		if mf.Content == ManifestContentDeletes {
-			continue
 		}
 		results = append(results, mf)
 	}

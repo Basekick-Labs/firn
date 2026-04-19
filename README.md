@@ -287,10 +287,11 @@ Apache License 2.0. See [LICENSE](LICENSE).
 ## Status
 
 Firn is in active development (pre-v1.0). Compaction (binpack strategy, DuckDB
-subprocess-isolated) and snapshot expiry (retention by count + age, atomic removal)
+subprocess-isolated), snapshot expiry (retention by count + age, atomic removal),
+and orphan file cleanup (grace period, full manifest-walk live-file reconciliation)
 are implemented end-to-end. AWS Glue and Lakekeeper catalogs are supported.
 S3-compatible storage and config-driven scheduling are working.
 
-Not yet suitable for production use. Orphan file cleanup is next (v0.2).
+Not yet suitable for production use.
 
 Open an issue or follow the project to contribute.

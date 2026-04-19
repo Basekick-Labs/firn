@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -153,4 +154,18 @@ func (b *Backend) StatFile(ctx context.Context, path string) (int64, error) {
 		return 0, fmt.Errorf("s3 stat %s: %w", path, err)
 	}
 	return aws.ToInt64(out.ContentLength), nil
+}
+
+func (b *Backend) ModTime(ctx context.Context, path string) (time.Time, error) {
+	out, err := b.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(b.bucket),
+		Key:    aws.String(path),
+	})
+	if err != nil {
+		return time.Time{}, fmt.Errorf("s3 head %s: %w", path, err)
+	}
+	if out.LastModified == nil {
+		return time.Time{}, fmt.Errorf("no LastModified for %s", path)
+	}
+	return *out.LastModified, nil
 }
