@@ -1,10 +1,18 @@
 package main
 
 import (
+	"context"
+	"fmt"
+	"net/http"
 	"os"
+	"time"
 
 	"github.com/basekick-labs/firn/internal/config"
+	"github.com/basekick-labs/firn/internal/metrics"
 	"github.com/basekick-labs/firn/internal/scheduler"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -39,7 +47,47 @@ func run(cmd *cobra.Command, _ []string) error {
 		zerolog.SetGlobalLevel(zerolog.InfoLevel)
 	}
 
-	s, err := scheduler.New(cfg)
+	// Build Prometheus registry and Firn metrics.
+	promReg := prometheus.NewRegistry()
+	promReg.MustRegister(
+		collectors.NewGoCollector(),
+		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+	)
+	metricsReg := metrics.NewRegistry(promReg)
+
+	// Start metrics + health HTTP server if configured.
+	if cfg.Scheduler.MetricsAddr != "" {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promhttp.HandlerFor(promReg, promhttp.HandlerOpts{}))
+		mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte("ok\n"))
+		})
+		srv := &http.Server{
+			Addr:    cfg.Scheduler.MetricsAddr,
+			Handler: mux,
+		}
+		go func() {
+			<-cmd.Context().Done()
+			shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = srv.Shutdown(shutCtx)
+		}()
+
+		startErr := make(chan error, 1)
+		go func() {
+			log.Info().Str("addr", cfg.Scheduler.MetricsAddr).Msg("metrics server starting")
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				startErr <- err
+			}
+		}()
+		select {
+		case err := <-startErr:
+			return fmt.Errorf("metrics server: %w", err)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+
+	s, err := scheduler.New(cfg, metricsReg)
 	if err != nil {
 		return err
 	}

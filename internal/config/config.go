@@ -84,6 +84,7 @@ type SchedulerConfig struct {
 	Interval          string `yaml:"interval"`
 	MaxConcurrentJobs int    `yaml:"max_concurrent_jobs"`
 	MemoryLimit       string `yaml:"memory_limit"`
+	MetricsAddr       string `yaml:"metrics_addr"` // HTTP address for /metrics and /healthz; empty disables
 }
 
 func Load(path string) (*Config, error) {
