@@ -10,6 +10,7 @@ import (
 	"github.com/basekick-labs/firn/internal/compaction"
 	"github.com/basekick-labs/firn/internal/config"
 	"github.com/basekick-labs/firn/internal/expiry"
+	"github.com/basekick-labs/firn/internal/metrics"
 	"github.com/basekick-labs/firn/internal/orphan"
 	"github.com/basekick-labs/firn/internal/policy"
 	"github.com/rs/zerolog/log"
@@ -22,11 +23,12 @@ type Scheduler struct {
 	expiry   *expiry.Engine
 	orphan   *orphan.Engine
 	policy   *policy.Resolver
+	metrics  *metrics.Registry
 	cfg      *config.Config
 	interval time.Duration
 }
 
-func New(cfg *config.Config) (*Scheduler, error) {
+func New(cfg *config.Config, metricsReg *metrics.Registry) (*Scheduler, error) {
 	interval, err := time.ParseDuration(cfg.Scheduler.Interval)
 	if err != nil {
 		return nil, fmt.Errorf("parse scheduler interval %q: %w", cfg.Scheduler.Interval, err)
@@ -48,6 +50,7 @@ func New(cfg *config.Config) (*Scheduler, error) {
 		expiry:   expiry.NewEngine(cat, stor),
 		orphan:   orphan.NewEngine(cat, stor),
 		policy:   policy.NewResolver(&cfg.Maintenance),
+		metrics:  metricsReg,
 		cfg:      cfg,
 		interval: interval,
 	}, nil
@@ -111,8 +114,10 @@ func (s *Scheduler) cycle(ctx context.Context) error {
 	}
 
 	wg.Wait()
+	duration := time.Since(start)
+	s.metrics.RecordCycle(duration, len(tables))
 	log.Info().
-		Dur("duration", time.Since(start)).
+		Dur("duration", duration).
 		Int("tables", len(tables)).
 		Msg("maintenance cycle complete")
 	return nil
@@ -120,22 +125,24 @@ func (s *Scheduler) cycle(ctx context.Context) error {
 
 func (s *Scheduler) maintain(ctx context.Context, id catalog.TableIdentifier) {
 	p := s.policy.For(id)
+	table := id.String()
 
 	if p.Compaction.IsEnabled() {
 		candidates, err := s.engine.FindCandidates(ctx, id, p.Compaction)
 		if err != nil {
-			log.Error().Err(err).Str("table", id.String()).Msg("find candidates failed")
+			log.Error().Err(err).Str("table", table).Msg("find candidates failed")
 			return
 		}
-		log.Debug().Str("table", id.String()).Int("candidates", len(candidates)).Msg("compaction candidates")
+		log.Debug().Str("table", table).Int("candidates", len(candidates)).Msg("compaction candidates")
 		for _, c := range candidates {
 			result, err := s.engine.ExecuteJob(ctx, c)
+			s.metrics.RecordCompaction(table, result, err)
 			if err != nil {
-				log.Error().Err(err).Str("table", id.String()).Str("partition", c.Partition).Msg("compaction job failed")
+				log.Error().Err(err).Str("table", table).Str("partition", c.Partition).Msg("compaction job failed")
 				continue
 			}
 			log.Info().
-				Str("table", id.String()).
+				Str("table", table).
 				Str("partition", c.Partition).
 				Int("files_merged", len(result.InputFiles)).
 				Int64("bytes_before", result.BytesBefore).
@@ -147,11 +154,12 @@ func (s *Scheduler) maintain(ctx context.Context, id catalog.TableIdentifier) {
 
 	if p.SnapshotExpiry.IsEnabled() {
 		result, err := s.expiry.ExecuteExpiry(ctx, id, p.SnapshotExpiry)
+		s.metrics.RecordExpiry(table, result, err)
 		if err != nil {
-			log.Error().Err(err).Str("table", id.String()).Msg("snapshot expiry failed")
+			log.Error().Err(err).Str("table", table).Msg("snapshot expiry failed")
 		} else if result.ExpiredSnapshots > 0 {
 			log.Info().
-				Str("table", id.String()).
+				Str("table", table).
 				Int("expired_snapshots", result.ExpiredSnapshots).
 				Int("deleted_manifests", result.DeletedManifests).
 				Int("deleted_data_files", result.DeletedDataFiles).
@@ -162,11 +170,12 @@ func (s *Scheduler) maintain(ctx context.Context, id catalog.TableIdentifier) {
 
 	if p.OrphanCleanup.IsEnabled() {
 		result, err := s.orphan.ExecuteCleanup(ctx, id, p.OrphanCleanup)
+		s.metrics.RecordOrphan(table, result, err)
 		if err != nil {
-			log.Error().Err(err).Str("table", id.String()).Msg("orphan cleanup failed")
+			log.Error().Err(err).Str("table", table).Msg("orphan cleanup failed")
 		} else if result.DeletedFiles > 0 {
 			log.Info().
-				Str("table", id.String()).
+				Str("table", table).
 				Int("scanned", result.ScannedFiles).
 				Int("deleted", result.DeletedFiles).
 				Int("skipped", result.SkippedFiles).

@@ -231,6 +231,7 @@ scheduler:
   interval: "5m"                    # how often Firn evaluates tables
   max_concurrent_jobs: 4
   memory_limit: "4GB"               # DuckDB memory cap per compaction job
+  metrics_addr: ":9090"             # Prometheus /metrics + /healthz; omit to disable
 ```
 
 ---
@@ -255,6 +256,38 @@ helm install firn firn/firn -f values.yaml
 ```bash
 firn --config firn.yaml
 ```
+
+---
+
+## Observability
+
+When `metrics_addr` is set, Firn exposes:
+
+- **`GET /metrics`** — Prometheus text format. Scrape with any Prometheus-compatible
+  collector (Prometheus, VictoriaMetrics, Grafana Agent, etc.).
+- **`GET /healthz`** — Returns HTTP 200. Use for liveness probes.
+
+### Exposed metrics
+
+| Metric | Type | Description |
+|---|---|---|
+| `firn_compaction_jobs_total` | Counter | Jobs attempted, labelled `table` and `status` (success\|error) |
+| `firn_compaction_files_merged_total` | Counter | Input files merged |
+| `firn_compaction_bytes_read_total` | Counter | Bytes read before compaction |
+| `firn_compaction_bytes_written_total` | Counter | Bytes written after compaction |
+| `firn_compaction_duration_seconds` | Histogram | Per-job duration |
+| `firn_expiry_snapshots_expired_total` | Counter | Iceberg snapshots expired |
+| `firn_expiry_manifests_deleted_total` | Counter | Manifest files deleted |
+| `firn_expiry_data_files_deleted_total` | Counter | Data files deleted during expiry |
+| `firn_expiry_duration_seconds` | Histogram | Per-table expiry duration |
+| `firn_orphan_files_scanned_total` | Counter | Files scanned during orphan cleanup |
+| `firn_orphan_files_deleted_total` | Counter | Orphan files deleted |
+| `firn_orphan_files_skipped_total` | Counter | Files skipped (within grace period) |
+| `firn_orphan_duration_seconds` | Histogram | Per-table orphan cleanup duration |
+| `firn_cycle_duration_seconds` | Histogram | Full maintenance cycle duration |
+| `firn_cycle_tables_total` | Gauge | Tables processed in the last cycle |
+
+Standard Go runtime and process metrics (`go_*`, `process_*`) are also included.
 
 ---
 
