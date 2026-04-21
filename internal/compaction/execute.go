@@ -26,16 +26,63 @@ import (
 
 var memoryLimitRE = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?\s*(B|KB|MB|GB|TB)$`)
 
-// ExecuteJob runs a full compaction job for a candidate:
-//  1. Writes a crash-recovery manifest
-//  2. Spawns the compact subprocess (DuckDB merge)
-//  3. Writes Iceberg manifest + manifest list to storage
-//  4. Commits a new snapshot via the catalog
-//  5. Deletes input files and removes the recovery manifest
+const maxSplitDepth = 4
+
+// isRecoverableExit reports whether err from subprocessFn is an OOM/segfault
+// worth retrying with fewer files.
+// Recoverable: exit 137 (SIGKILL / Linux OOM killer), exit 139 (SIGSEGV),
+// or a JSON decode failure meaning the subprocess died before writing stdout.
+// NOTE: the decode-failure check is coupled to the format string in spawnSubprocess;
+// update both together if that string ever changes.
+func isRecoverableExit(err error) bool {
+	if err == nil {
+		return false
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		code := exitErr.ExitCode()
+		return code == 137 || code == 139
+	}
+	return strings.Contains(err.Error(), "decode subprocess result:")
+}
+
+// splitCandidate divides c.Files in half. Caller must ensure len(c.Files) >= 2.
+func splitCandidate(c Candidate) (lo, hi Candidate) {
+	mid := len(c.Files) / 2
+	lo = Candidate{Table: c.Table, Partition: c.Partition, Policy: c.Policy, Files: c.Files[:mid]}
+	hi = Candidate{Table: c.Table, Partition: c.Partition, Policy: c.Policy, Files: c.Files[mid:]}
+	return
+}
+
+// mergeResults combines two Results from a successful split pair into a summary.
+func mergeResults(a, b Result) Result {
+	inputs := make([]string, 0, len(a.InputFiles)+len(b.InputFiles))
+	inputs = append(inputs, a.InputFiles...)
+	inputs = append(inputs, b.InputFiles...)
+	return Result{
+		Table:       a.Table,
+		Partition:   a.Partition,
+		InputFiles:  inputs,
+		OutputFile:  "", // two output files — no single canonical path
+		OutputSize:  a.OutputSize + b.OutputSize,
+		BytesBefore: a.BytesBefore + b.BytesBefore,
+		BytesAfter:  a.BytesAfter + b.BytesAfter,
+		Duration:    a.Duration + b.Duration,
+	}
+}
+
+// ExecuteJob runs a full compaction job for a candidate, splitting the file
+// batch in half and retrying on recoverable subprocess failures (OOM, segfault).
+func (e *Engine) ExecuteJob(ctx context.Context, c Candidate) (Result, error) {
+	return e.executeWithSplit(ctx, c, 0)
+}
+
+// executeWithSplit is the recursive implementation of ExecuteJob.
+// depth tracks recursion level; maxSplitDepth caps it at 4 (so up to 16→1 files).
 //
 // Iceberg v2 sequence numbers are not yet managed by this implementation;
 // only v1-compatible tables (no row-level deletes) are safe to compact.
-func (e *Engine) ExecuteJob(ctx context.Context, c Candidate) (Result, error) {
+func (e *Engine) executeWithSplit(ctx context.Context, c Candidate, depth int) (Result, error) {
 	start := time.Now()
 
 	meta, err := e.catalog.LoadTable(ctx, c.Table)
@@ -132,11 +179,50 @@ func (e *Engine) ExecuteJob(ctx context.Context, c Candidate) (Result, error) {
 		TempDir:       tempDir,
 	}
 
-	subResult, err := spawnSubprocess(ctx, subCfg)
-	if err != nil {
-		return Result{}, fmt.Errorf("compact subprocess: %w", err)
-	}
-	if !subResult.Success {
+	subResult, subErr := e.subprocessFn(ctx, subCfg)
+
+	switch {
+	case subErr != nil && isRecoverableExit(subErr):
+		// OOM or segfault — clean up this attempt's recovery manifest and split.
+		if delErr := deleteRecovery(ctx, e.storage, recoveryKey); delErr != nil {
+			log.Warn().Err(delErr).Str("job_id", jobID).Msg("failed to delete recovery manifest before split")
+		}
+		if len(c.Files) < 2 || depth >= maxSplitDepth {
+			return Result{}, fmt.Errorf("compact subprocess: %w (cannot split further: files=%d depth=%d)", subErr, len(c.Files), depth)
+		}
+		log.Warn().Err(subErr).
+			Str("table", c.Table.String()).
+			Str("partition", c.Partition).
+			Int("files", len(c.Files)).
+			Int("depth", depth).
+			Msg("recoverable subprocess failure; splitting candidate")
+		lo, hi := splitCandidate(c)
+		loRes, loErr := e.executeWithSplit(ctx, lo, depth+1)
+		hiRes, hiErr := e.executeWithSplit(ctx, hi, depth+1)
+		if loErr == nil && hiErr == nil {
+			merged := mergeResults(loRes, hiRes)
+			merged.Duration = time.Since(start)
+			return merged, nil
+		}
+		// At least one half failed; the successful half already committed its
+		// snapshot so partial progress is durable in the catalog.
+		if loErr != nil {
+			return Result{}, fmt.Errorf("split lo (depth %d): %w", depth+1, loErr)
+		}
+		return Result{}, fmt.Errorf("split hi (depth %d): %w", depth+1, hiErr)
+
+	case subErr != nil:
+		// Non-recoverable (permission denied, context cancelled, etc.)
+		if delErr := deleteRecovery(ctx, e.storage, recoveryKey); delErr != nil {
+			log.Warn().Err(delErr).Str("job_id", jobID).Msg("failed to delete recovery manifest after non-recoverable failure")
+		}
+		return Result{}, fmt.Errorf("compact subprocess: %w", subErr)
+
+	case !subResult.Success:
+		// Application-level DuckDB error — splitting won't help.
+		if delErr := deleteRecovery(ctx, e.storage, recoveryKey); delErr != nil {
+			log.Warn().Err(delErr).Str("job_id", jobID).Msg("failed to delete recovery manifest after subprocess error")
+		}
 		return Result{}, fmt.Errorf("compact subprocess error: %s", subResult.Error)
 	}
 
