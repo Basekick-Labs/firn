@@ -7,8 +7,8 @@ Iceberg tables on a configurable schedule, evaluates maintenance policies, and
 executes compaction, snapshot expiry, and orphan cleanup jobs.
 
 It does not embed a catalog. It connects to an external catalog (Lakekeeper,
-Polaris, Nessie) via the standard Iceberg REST Catalog API to discover tables
-and commit new snapshots atomically.
+Polaris, Nessie, or AWS Glue) to discover tables and commit new snapshots
+atomically.
 
 ---
 
@@ -34,7 +34,7 @@ and commit new snapshots atomically.
 │                     │  │  - Manifest GC     │  │   │
 │  ┌─────────────┐    │  └────────────────────┘  │   │
 │  │   Storage   │◀──▶│  ┌────────────────────┐  │   │
-│  │   Client    │    │  │ Orphan Cleanup     │  │   │
+│  │   Backend   │    │  │ Orphan Cleanup     │  │   │
 │  └─────────────┘    │  │  - Storage enum.   │  │   │
 │                     │  │  - Live reconcile  │  │   │
 │                     │  └────────────────────┘  │   │
@@ -46,59 +46,36 @@ and commit new snapshots atomically.
 
 ## Core Interfaces
 
-### TableSource
-
-The central abstraction. Every maintenance operation works through this interface.
-Implementations exist for each catalog type.
+### catalog.Client
 
 ```go
-type TableSource interface {
-    // ListTables returns all tables this source manages.
-    ListTables(ctx context.Context) ([]TableIdentifier, error)
-
-    // FindCompactionCandidates returns file groups ready for compaction.
-    FindCompactionCandidates(ctx context.Context, table TableIdentifier, policy CompactionPolicy) ([]CompactionCandidate, error)
-
-    // CommitCompaction atomically commits a compaction result as a new snapshot.
-    CommitCompaction(ctx context.Context, table TableIdentifier, job CompactionResult) error
-
-    // FindExpiredSnapshots returns snapshots eligible for expiry per policy.
-    FindExpiredSnapshots(ctx context.Context, table TableIdentifier, policy SnapshotPolicy) ([]SnapshotExpiry, error)
-
-    // CommitSnapshotExpiry removes expired snapshots and their exclusive files.
-    CommitSnapshotExpiry(ctx context.Context, table TableIdentifier, expiry []SnapshotExpiry) error
-
-    // ListOrphanFiles returns files in storage unreferenced by any snapshot.
-    ListOrphanFiles(ctx context.Context, table TableIdentifier, gracePeriod time.Duration) ([]string, error)
-
-    // DeleteOrphanFiles removes orphaned files from storage.
-    DeleteOrphanFiles(ctx context.Context, table TableIdentifier, files []string) error
+type Client interface {
+    ListNamespaces(ctx context.Context) ([]string, error)
+    ListTables(ctx context.Context, namespace string) ([]TableIdentifier, error)
+    LoadTable(ctx context.Context, id TableIdentifier) (*iceberg.TableMetadata, error)
+    CommitTransaction(ctx context.Context, id TableIdentifier, tx Transaction) error
 }
 ```
 
-### StorageBackend
+Implementations:
+- `catalog/rest` — shared Iceberg REST client (OAuth2, pagination, commit); used by Lakekeeper, Polaris, and Nessie
+- `catalog/lakekeeper` — thin wrapper: `/v1/...` paths, `{url}/oauth/tokens`
+- `catalog/polaris` — thin wrapper: `/v1/...` paths, `{url}/oauth/tokens` (same as Lakekeeper)
+- `catalog/nessie` — thin wrapper: `/iceberg/v1/...` paths, configurable token endpoint
+- `catalog/glue` — AWS Glue Data Catalog (no REST, uses AWS SDK)
+
+### storage.Backend
 
 ```go
-type StorageBackend interface {
+type Backend interface {
     Read(ctx context.Context, path string) (io.ReadCloser, error)
-    ReadTo(ctx context.Context, path string, w io.Writer) error
     Write(ctx context.Context, path string, r io.Reader, size int64) error
     Delete(ctx context.Context, path string) error
+    DeleteMany(ctx context.Context, paths []string) error
     Exists(ctx context.Context, path string) (bool, error)
     List(ctx context.Context, prefix string) ([]string, error)
     StatFile(ctx context.Context, path string) (int64, error)
     ModTime(ctx context.Context, path string) (time.Time, error)
-}
-```
-
-### CatalogClient
-
-```go
-type CatalogClient interface {
-    ListNamespaces(ctx context.Context) ([]string, error)
-    ListTables(ctx context.Context, namespace string) ([]TableIdentifier, error)
-    LoadTable(ctx context.Context, id TableIdentifier) (*TableMetadata, error)
-    CommitTransaction(ctx context.Context, id TableIdentifier, tx Transaction) error
 }
 ```
 
@@ -113,9 +90,9 @@ type CatalogClient interface {
 3. Walk manifest list → manifests → data file entries
 4. Group data files by partition spec values
 5. Apply policy filters:
-   - Skip files written within `min_file_age`
+   - Skip files written within `min_file_age_minutes`
    - Skip partitions with fewer than `min_file_count` files
-   - Skip partitions already at or above `target_file_size`
+   - Skip partitions already at or above `target_file_size_mb`
 6. Return one `CompactionCandidate` per eligible partition group
 
 ### Compaction Execution
@@ -127,7 +104,7 @@ Running in a subprocess guarantees full memory release when the job finishes.
 ```
 Parent process (Firn daemon)
     │
-    ├── Writes SubprocessConfig to stdin
+    ├── Serialises SubprocessConfig to stdin
     ├── Spawns: firn compact --job-stdin
     └── Reads SubprocessResult from stdout
 
@@ -141,12 +118,14 @@ Child process (firn compact)
     ├── Execute compaction query:
     │     COPY (
     │       SELECT * FROM read_parquet([files], union_by_name=true)
-    │       ORDER BY sort_keys
+    │       [ORDER BY sort_keys]          -- only for sort strategy
     │     ) TO output (FORMAT PARQUET, COMPRESSION ZSTD)
     ├── Upload compacted file to storage
     ├── Delete source files
     └── Write result to stdout, exit
 ```
+
+Supported strategies: `binpack` (default), `sort` (requires `sort_keys`).
 
 ### Crash Recovery
 
@@ -187,15 +166,6 @@ The catalog enforces optimistic concurrency. If another writer committed between
 the time Firn read the current snapshot and the time it attempts to commit, the
 catalog returns a conflict error and Firn retries from candidate selection.
 
-### Adaptive Batch Splitting
-
-If a compaction job fails with a recoverable error (OOM, DuckDB segfault), Firn
-splits the file batch in half and retries each half independently. This recurses
-up to 4 levels (e.g., 30 → 15 → 7 → 3 files).
-
-Recoverable errors: SIGKILL (exit 137), SIGSEGV (exit 139), out-of-memory log lines.
-Non-recoverable errors: permission denied, file not found, access denied.
-
 ---
 
 ## Snapshot Expiry
@@ -229,11 +199,10 @@ Non-recoverable errors: permission denied, file not found, access denied.
 Firn runs a scheduler loop at the configured interval (default: 5 minutes).
 
 Each tick:
-1. Recover orphaned compaction manifests
-2. List all tables from all configured catalogs
-3. For each table, evaluate all maintenance operations concurrently
-4. Enforce `max_concurrent_jobs` across all tables
-5. Record results in job history (last 100 jobs)
+1. List all namespaces from the configured catalog
+2. List all tables in each namespace
+3. For each table, evaluate all three maintenance operations
+4. Enforce `max_concurrent_jobs` across all tables with a semaphore
 
 The scheduler is single-instance. In Kubernetes, run exactly one Firn pod per
 catalog. Horizontal scaling is not needed — Firn is I/O-bound, not CPU-bound.
@@ -242,42 +211,50 @@ catalog. Horizontal scaling is not needed — Firn is I/O-bound, not CPU-bound.
 
 ## Policy Engine
 
-Policies are evaluated in this order (most specific wins):
+Each table resolves its effective policy by merging against the global defaults:
 
-1. Table-level policy (if defined)
-2. Namespace-level policy (if defined)
-3. Global default policy
+1. Start with the global `defaults` policy
+2. If a namespace-level override exists, merge it (override fields win)
+3. If a table-level override exists, merge it (override fields win)
 
-Policies are loaded from the config file at startup. A future version will
-support storing policies as Iceberg table properties for per-table overrides
-without restarting Firn.
+Note: namespace and table overrides each merge directly against defaults — a
+table override does NOT layer on top of a namespace override.
+
+`enabled` uses `*bool` (pointer-to-bool) so that an absent YAML field (nil) is
+distinguishable from an explicit `enabled: false`. This allows overrides to
+disable a default-enabled policy without ambiguity.
 
 ---
 
 ## Observability
 
-### Metrics (Prometheus)
+### Prometheus Metrics
 
-```
-firn_compaction_jobs_total{table, status}
-firn_compaction_files_merged_total{table}
-firn_compaction_bytes_before_total{table}
-firn_compaction_bytes_after_total{table}
-firn_snapshots_expired_total{table}
-firn_orphan_files_deleted_total{table}
-firn_job_duration_seconds{table, operation}
-firn_scheduler_cycle_duration_seconds
-firn_catalog_request_duration_seconds{catalog, operation}
-```
+Exposed at `GET /metrics` when `scheduler.metrics_addr` is set.
+
+| Metric | Type | Labels |
+|---|---|---|
+| `firn_compaction_jobs_total` | Counter | `table`, `status` |
+| `firn_compaction_files_merged_total` | Counter | `table` |
+| `firn_compaction_bytes_read_total` | Counter | `table` |
+| `firn_compaction_bytes_written_total` | Counter | `table` |
+| `firn_compaction_duration_seconds` | Histogram | `table`, `status` |
+| `firn_expiry_snapshots_expired_total` | Counter | `table` |
+| `firn_expiry_manifests_deleted_total` | Counter | `table` |
+| `firn_expiry_data_files_deleted_total` | Counter | `table` |
+| `firn_expiry_duration_seconds` | Histogram | `table`, `status` |
+| `firn_orphan_files_scanned_total` | Counter | `table` |
+| `firn_orphan_files_deleted_total` | Counter | `table` |
+| `firn_orphan_files_skipped_total` | Counter | `table` |
+| `firn_orphan_duration_seconds` | Histogram | `table`, `status` |
+| `firn_cycle_duration_seconds` | Histogram | — |
+| `firn_cycle_tables_total` | Gauge | — |
+
+Standard Go runtime and process metrics (`go_*`, `process_*`) are also included.
 
 ### Health Endpoint
 
-`GET /healthz` — returns 200 if the daemon is running and catalog is reachable.
-
-### Status Endpoint
-
-`GET /status` — returns JSON with recent job history, current cycle state, and
-per-table maintenance stats.
+`GET /healthz` — returns HTTP 200. Used for Kubernetes liveness probes.
 
 ---
 
@@ -286,35 +263,29 @@ per-table maintenance stats.
 ```
 firn/
 ├── cmd/
-│   ├── firn/          # Main daemon entrypoint
-│   └── compact/       # Subprocess entrypoint (firn compact --job-stdin)
+│   ├── firn/           # Main daemon entrypoint
+│   └── compact/        # Subprocess entrypoint (firn compact --job-stdin)
 ├── internal/
-│   ├── catalog/       # Catalog client interface + implementations
-│   │   ├── rest/      # Shared Iceberg REST catalog client (OAuth2, pagination, commit)
-│   │   ├── lakekeeper/
-│   │   ├── polaris/
-│   │   ├── nessie/
-│   │   └── glue/
-│   ├── storage/       # Storage backend interface + implementations
-│   │   ├── s3/
-│   │   ├── local/
-│   │   └── azure/
-│   ├── compaction/    # Compaction engine
-│   │   ├── candidate.go
-│   │   ├── job.go
-│   │   ├── subprocess.go
-│   │   ├── commit.go
-│   │   ├── recovery.go
-│   │   └── adaptive.go
-│   ├── expiry/        # Snapshot expiry
-│   ├── orphan/        # Orphan file cleanup
-│   ├── policy/        # Policy evaluation engine
-│   ├── scheduler/     # Main scheduler loop
-│   ├── iceberg/       # Iceberg metadata types + parsing
-│   │   ├── metadata.go
-│   │   ├── manifest.go
-│   │   └── snapshot.go
-│   └── config/        # Config loading + validation
+│   ├── catalog/        # Catalog client interface + implementations
+│   │   ├── catalog.go  # Client interface, types (TableIdentifier, Transaction, etc.)
+│   │   ├── rest/       # Shared Iceberg REST client (OAuth2, pagination, commit)
+│   │   ├── lakekeeper/ # Thin wrapper over rest.Client
+│   │   ├── polaris/    # Thin wrapper over rest.Client
+│   │   ├── nessie/     # Thin wrapper over rest.Client (/iceberg prefix)
+│   │   └── glue/       # AWS Glue Data Catalog client
+│   ├── storage/        # Storage backend interface + implementations
+│   │   └── s3/         # S3-compatible backend (AWS S3, MinIO, R2, Tigris, ...)
+│   ├── compaction/     # Compaction engine
+│   │   ├── compaction.go  # Candidate selection + FindCandidates
+│   │   ├── execute.go     # ExecuteJob, subprocess launch
+│   │   └── recovery.go    # Crash recovery manifest read/write/reconcile
+│   ├── expiry/         # Snapshot expiry engine
+│   ├── orphan/         # Orphan file cleanup engine
+│   ├── policy/         # Policy merge + evaluation
+│   ├── scheduler/      # Scheduler loop + buildCatalog/buildStorage
+│   ├── metrics/        # Prometheus registry wrapper
+│   ├── iceberg/        # Iceberg metadata types + Avro manifest parsing
+│   └── config/         # Config loading + validation (YAML)
 ├── docs/
 └── README.md
 ```
