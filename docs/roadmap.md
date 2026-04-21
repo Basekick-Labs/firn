@@ -30,7 +30,7 @@ Goal: full S3 Tables feature parity for maintenance operations.
 - [ ] Adaptive batch splitting on OOM/segfault
 - [x] Per-namespace policy overrides
 - [x] Per-table policy overrides
-- [ ] Catalog support: Apache Polaris, Project Nessie
+- [x] Catalog support: Apache Polaris, Project Nessie
 - [ ] Storage backend: Google Cloud Storage, Azure Blob Storage
 - [x] Prometheus metrics endpoint
 - [ ] Health + status HTTP endpoints (`/healthz` liveness probe added; rich `/status` endpoint planned)
