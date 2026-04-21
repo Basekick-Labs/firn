@@ -1,5 +1,7 @@
-// Package lakekeeper provides an Iceberg catalog client for Lakekeeper.
-package lakekeeper
+// Package polaris provides an Iceberg catalog client for Apache Polaris.
+// Polaris speaks the standard Iceberg REST spec at /v1/... and uses OAuth2
+// client credentials with its token endpoint at {url}/oauth/tokens.
+package polaris
 
 import (
 	"strings"
@@ -8,7 +10,7 @@ import (
 	"github.com/basekick-labs/firn/internal/config"
 )
 
-// New returns a catalog client for a Lakekeeper instance.
+// New returns a catalog client for an Apache Polaris instance.
 func New(cfg config.CatalogConfig) *rest.Client {
 	base := strings.TrimRight(cfg.URL, "/")
 	tokenEndpoint := base + "/oauth/tokens"

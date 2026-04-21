@@ -7,6 +7,8 @@ import (
 	"github.com/basekick-labs/firn/internal/catalog"
 	"github.com/basekick-labs/firn/internal/catalog/glue"
 	"github.com/basekick-labs/firn/internal/catalog/lakekeeper"
+	"github.com/basekick-labs/firn/internal/catalog/nessie"
+	"github.com/basekick-labs/firn/internal/catalog/polaris"
 	"github.com/basekick-labs/firn/internal/config"
 	"github.com/basekick-labs/firn/internal/storage"
 	s3backend "github.com/basekick-labs/firn/internal/storage/s3"
@@ -16,6 +18,10 @@ func buildCatalog(cfg *config.Config) (catalog.Client, error) {
 	switch cfg.Catalog.Type {
 	case "lakekeeper":
 		return lakekeeper.New(cfg.Catalog), nil
+	case "polaris":
+		return polaris.New(cfg.Catalog), nil
+	case "nessie":
+		return nessie.New(cfg.Catalog), nil
 	case "glue":
 		return glue.New(context.Background(), cfg.Catalog)
 	default:

@@ -290,9 +290,11 @@ firn/
 │   └── compact/       # Subprocess entrypoint (firn compact --job-stdin)
 ├── internal/
 │   ├── catalog/       # Catalog client interface + implementations
+│   │   ├── rest/      # Shared Iceberg REST catalog client (OAuth2, pagination, commit)
 │   │   ├── lakekeeper/
 │   │   ├── polaris/
-│   │   └── nessie/
+│   │   ├── nessie/
+│   │   └── glue/
 │   ├── storage/       # Storage backend interface + implementations
 │   │   ├── s3/
 │   │   ├── local/

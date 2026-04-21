@@ -16,8 +16,8 @@ type Config struct {
 }
 
 type CatalogConfig struct {
-	Type       string            `yaml:"type"` // lakekeeper | glue
-	URL        string            `yaml:"url"`  // for lakekeeper
+	Type       string            `yaml:"type"`   // lakekeeper | polaris | nessie | glue
+	URL        string            `yaml:"url"`    // for REST catalogs
 	Region     string            `yaml:"region"` // for glue
 	Credential CatalogCredential `yaml:"credential"`
 }
@@ -25,6 +25,7 @@ type CatalogConfig struct {
 type CatalogCredential struct {
 	ClientID     string `yaml:"client_id"`
 	ClientSecret string `yaml:"client_secret"`
+	TokenURI     string `yaml:"token_uri"` // optional: override OAuth2 token endpoint
 }
 
 type StorageConfig struct {
@@ -156,7 +157,7 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("catalog.type is required")
 	}
 	switch cfg.Catalog.Type {
-	case "lakekeeper", "glue":
+	case "lakekeeper", "polaris", "nessie", "glue":
 	default:
 		return fmt.Errorf("catalog.type %q is not supported", cfg.Catalog.Type)
 	}

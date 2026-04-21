@@ -144,8 +144,8 @@ interop). No AWS account required.
 |---|---|
 | [Lakekeeper](https://github.com/lakekeeper/lakekeeper) | ✅ Implemented |
 | AWS Glue Data Catalog | ✅ Implemented |
-| Apache Polaris | Planned (v0.2) |
-| Project Nessie | Planned (v0.2) |
+| Apache Polaris | ✅ Implemented |
+| Project Nessie | ✅ Implemented |
 
 ---
 
@@ -169,11 +169,13 @@ Firn is configured via a single YAML file.
 
 ```yaml
 catalog:
-  type: lakekeeper
+  type: lakekeeper          # lakekeeper | polaris | nessie | glue
   url: http://localhost:8080
   credential:
     client_id: firn
     client_secret: secret
+    # token_uri: https://keycloak.example.com/realms/nessie/protocol/openid-connect/token
+    # Override OAuth2 token endpoint (Nessie + external IdP, or Polaris custom auth)
 
 storage:
   type: s3
@@ -331,11 +333,12 @@ Apache License 2.0. See [LICENSE](LICENSE).
 
 ## Status
 
-Firn is in active development (pre-v1.0). Compaction (binpack strategy, DuckDB
-subprocess-isolated), snapshot expiry (retention by count + age, atomic removal),
-and orphan file cleanup (grace period, full manifest-walk live-file reconciliation)
-are implemented end-to-end. AWS Glue and Lakekeeper catalogs are supported.
-S3-compatible storage and config-driven scheduling are working.
+Firn is in active development (pre-v1.0). Compaction (binpack + sort strategies,
+DuckDB subprocess-isolated), snapshot expiry (retention by count + age, atomic
+removal), and orphan file cleanup (grace period, full manifest-walk live-file
+reconciliation) are implemented end-to-end. AWS Glue, Lakekeeper, Apache Polaris,
+and Project Nessie catalogs are supported. S3-compatible storage and config-driven
+scheduling are working.
 
 Not yet suitable for production use.
 
