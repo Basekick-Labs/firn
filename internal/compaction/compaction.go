@@ -66,13 +66,14 @@ type SubprocessResult struct {
 
 // Engine selects compaction candidates from Iceberg metadata and executes jobs.
 type Engine struct {
-	catalog catalog.Client
-	storage storage.Backend
-	cfg     *config.Config
+	catalog      catalog.Client
+	storage      storage.Backend
+	cfg          *config.Config
+	subprocessFn func(ctx context.Context, cfg SubprocessConfig) (SubprocessResult, error)
 }
 
 func NewEngine(cat catalog.Client, stor storage.Backend, cfg *config.Config) *Engine {
-	return &Engine{catalog: cat, storage: stor, cfg: cfg}
+	return &Engine{catalog: cat, storage: stor, cfg: cfg, subprocessFn: spawnSubprocess}
 }
 
 // FindCandidates reads the current snapshot's manifests and returns file groups

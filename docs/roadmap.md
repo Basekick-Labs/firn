@@ -27,7 +27,7 @@ Goal: full S3 Tables feature parity for maintenance operations.
 - [x] Orphan file cleanup (grace period, batch delete)
 - [x] Sort compaction strategy (ORDER BY sort keys)
 - [ ] Z-order compaction strategy
-- [ ] Adaptive batch splitting on OOM/segfault
+- [x] Adaptive batch splitting on OOM/segfault
 - [x] Per-namespace policy overrides
 - [x] Per-table policy overrides
 - [x] Catalog support: Apache Polaris, Project Nessie
