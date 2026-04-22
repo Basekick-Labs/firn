@@ -249,8 +249,81 @@ docker run -v ./firn.yaml:/etc/firn/config.yaml ghcr.io/basekick-labs/firn:lates
 ### Helm (Kubernetes)
 
 ```bash
-helm repo add firn https://charts.firn.dev
-helm install firn firn/firn -f values.yaml
+helm repo add firn https://basekick-labs.github.io/firn
+helm repo update
+helm install firn firn/firn \
+  --set firn.catalog.type=lakekeeper \
+  --set firn.catalog.url=http://lakekeeper:8181 \
+  --set firn.catalog.credential.clientId=firn \
+  --set firn.catalog.credential.clientSecret=secret \
+  --set firn.storage.region=us-east-1 \
+  --set firn.storage.accessKeyId=AKIAIOSFODNN7EXAMPLE \
+  --set firn.storage.secretAccessKey=wJalrXUtnFEMI
+```
+
+**With Prometheus Operator ServiceMonitor:**
+
+```bash
+helm install firn firn/firn \
+  --set firn.catalog.url=http://lakekeeper:8181 \
+  --set metrics.serviceMonitor.enabled=true \
+  --set metrics.serviceMonitor.labels.release=prometheus
+```
+
+**Per-namespace and per-table policy overrides:**
+
+```yaml
+# custom-values.yaml
+firn:
+  maintenance:
+    namespaces:
+      analytics:
+        compaction:
+          strategy: sort
+          sortKeys: ["event_time", "user_id"]
+    tables:
+      analytics.events:
+        compaction:
+          strategy: z-order
+          zOrderColumns: ["user_id", "event_type"]
+```
+
+```bash
+helm install firn firn/firn -f custom-values.yaml
+```
+
+**AWS IRSA (IAM Roles for Service Accounts):**
+
+```yaml
+# irsa-values.yaml
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/firn-role
+
+firn:
+  storage:
+    region: us-east-1
+    # Leave accessKeyId/secretAccessKey empty — IRSA provides credentials
+
+extraEnv:
+  - name: AWS_ROLE_ARN
+    value: arn:aws:iam::123456789012:role/firn-role
+  - name: AWS_WEB_IDENTITY_TOKEN_FILE
+    value: /var/run/secrets/eks.amazonaws.com/serviceaccount/token
+
+extraVolumes:
+  - name: aws-token
+    projected:
+      sources:
+        - serviceAccountToken:
+            audience: sts.amazonaws.com
+            expirationSeconds: 86400
+            path: token
+
+extraVolumeMounts:
+  - name: aws-token
+    mountPath: /var/run/secrets/eks.amazonaws.com/serviceaccount
+    readOnly: true
 ```
 
 ### Binary

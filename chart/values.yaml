@@ -1,0 +1,91 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/basekick-labs/firn
+  pullPolicy: IfNotPresent
+  tag: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  fsGroup: 1000
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+resources:
+  limits:
+    memory: 6Gi
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+metrics:
+  enabled: true
+  port: 9090
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    labels: {}
+    namespace: ""
+
+extraEnv: []
+extraVolumes: []
+extraVolumeMounts: []
+
+firn:
+  debug: false
+  catalog:
+    type: lakekeeper
+    url: ""
+    region: ""
+    credential:
+      clientId: ""
+      clientSecret: ""
+      tokenUri: ""
+  storage:
+    type: s3
+    endpoint: ""
+    region: us-east-1
+    accessKeyId: ""
+    secretAccessKey: ""
+    pathStyle: false
+  maintenance:
+    defaults:
+      compaction:
+        enabled: true
+        strategy: binpack
+        targetFileSizeMb: 512
+        minFileCount: 5
+        minFileAgeMinutes: 60
+        sortKeys: []
+        zOrderColumns: []
+      snapshotExpiry:
+        enabled: true
+        minSnapshotsToKeep: 5
+        maxSnapshotAgeHours: 120
+      orphanCleanup:
+        enabled: true
+        gracePeriodHours: 24
+    namespaces: {}
+    tables: {}
+  scheduler:
+    interval: "5m"
+    maxConcurrentJobs: 4
+    memoryLimit: "4GB"

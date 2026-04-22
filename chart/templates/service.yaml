@@ -1,0 +1,17 @@
+{{- if .Values.metrics.enabled -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "firn.fullname" . }}
+  labels:
+    {{- include "firn.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: metrics
+      port: {{ .Values.metrics.port }}
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    {{- include "firn.selectorLabels" . | nindent 4 }}
+{{- end }}

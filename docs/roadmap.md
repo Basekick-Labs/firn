@@ -34,7 +34,7 @@ Goal: full S3 Tables feature parity for maintenance operations.
 - [ ] Storage backend: Google Cloud Storage, Azure Blob Storage
 - [x] Prometheus metrics endpoint
 - [ ] Health + status HTTP endpoints (`/healthz` liveness probe added; rich `/status` endpoint planned)
-- [ ] Helm chart
+- [x] Helm chart
 
 ## v0.3 — Operability
 

@@ -1,0 +1,22 @@
+Firn {{ .Chart.AppVersion }} has been deployed.
+
+Firn will compact Iceberg tables, expire old snapshots, and remove orphan files
+according to the policy configured in values.yaml.
+
+{{- if .Values.metrics.enabled }}
+
+Metrics are available at :{{ .Values.metrics.port }}/metrics
+Health probe:            :{{ .Values.metrics.port }}/healthz
+
+To access metrics locally:
+  kubectl port-forward svc/{{ include "firn.fullname" . }} {{ .Values.metrics.port }}:{{ .Values.metrics.port }} -n {{ .Release.Namespace }}
+  curl http://localhost:{{ .Values.metrics.port }}/metrics
+
+{{- else }}
+
+Metrics are disabled. Set metrics.enabled=true to expose /metrics and /healthz.
+
+{{- end }}
+
+To view logs:
+  kubectl logs -l app.kubernetes.io/instance={{ .Release.Name }} -n {{ .Release.Namespace }} -f
