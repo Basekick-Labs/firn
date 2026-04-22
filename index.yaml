@@ -1,0 +1,26 @@
+apiVersion: v1
+entries:
+  firn:
+  - apiVersion: v2
+    appVersion: 0.2.0
+    created: "2026-04-22T03:31:49.674848069Z"
+    description: Iceberg table maintenance daemon — compaction, snapshot expiry, orphan
+      cleanup
+    digest: 6d3d8477a7836894dab4f9d24e2079096fb5d482edeeb502bf1d613b6909dfa3
+    home: https://github.com/basekick-labs/firn
+    keywords:
+    - iceberg
+    - compaction
+    - data-lakehouse
+    - maintenance
+    maintainers:
+    - name: Basekick Labs
+      url: https://github.com/basekick-labs
+    name: firn
+    sources:
+    - https://github.com/basekick-labs/firn
+    type: application
+    urls:
+    - https://github.com/Basekick-Labs/firn/releases/download/chart-0.1.0/firn-0.1.0.tgz
+    version: 0.1.0
+generated: "2026-04-22T03:31:49.674854228Z"
