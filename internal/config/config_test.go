@@ -83,6 +83,68 @@ storage:
 	assert.False(t, cfg.Maintenance.Defaults.OrphanCleanup.IsEnabled())
 }
 
+func TestLoad_StorageTypeGCS(t *testing.T) {
+	path := writeTemp(t, `
+catalog:
+  type: lakekeeper
+  url: http://localhost:8080
+storage:
+  type: gcs
+  project: my-project
+  credentials_json: '{"type":"service_account"}'
+`)
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, "gcs", cfg.Storage.Type)
+	assert.Equal(t, "my-project", cfg.Storage.Project)
+}
+
+func TestLoad_StorageTypeAzure(t *testing.T) {
+	path := writeTemp(t, `
+catalog:
+  type: lakekeeper
+  url: http://localhost:8080
+storage:
+  type: azure
+  account: myaccount
+  container: mycontainer
+  account_key: mykey
+`)
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, "azure", cfg.Storage.Type)
+	assert.Equal(t, "myaccount", cfg.Storage.Account)
+	assert.Equal(t, "mycontainer", cfg.Storage.Container)
+}
+
+func TestLoad_StorageTypeAzureMissingContainer(t *testing.T) {
+	path := writeTemp(t, `
+catalog:
+  type: lakekeeper
+  url: http://localhost:8080
+storage:
+  type: azure
+  account: myaccount
+  account_key: mykey
+`)
+	_, err := Load(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "storage.container")
+}
+
+func TestLoad_StorageTypeUnsupported(t *testing.T) {
+	path := writeTemp(t, `
+catalog:
+  type: lakekeeper
+  url: http://localhost:8080
+storage:
+  type: hdfs
+`)
+	_, err := Load(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "hdfs")
+}
+
 func TestLoad_NamespaceOverrideEnabledFalse(t *testing.T) {
 	path := writeTemp(t, `
 catalog:
