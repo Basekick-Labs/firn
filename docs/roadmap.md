@@ -33,7 +33,7 @@ Goal: full S3 Tables feature parity for maintenance operations.
 - [x] Catalog support: Apache Polaris, Project Nessie
 - [ ] Storage backend: Google Cloud Storage, Azure Blob Storage
 - [x] Prometheus metrics endpoint
-- [ ] Health + status HTTP endpoints (`/healthz` liveness probe added; rich `/status` endpoint planned)
+- [x] Health + status HTTP endpoints (`/healthz` liveness probe, `/status` last-cycle JSON)
 - [x] Helm chart
 
 ## v0.3 — Operability

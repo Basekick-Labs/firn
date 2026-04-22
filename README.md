@@ -233,7 +233,7 @@ scheduler:
   interval: "5m"                    # how often Firn evaluates tables
   max_concurrent_jobs: 4
   memory_limit: "4GB"               # DuckDB memory cap per compaction job
-  metrics_addr: ":9090"             # Prometheus /metrics + /healthz; omit to disable
+  metrics_addr: ":9090"             # Prometheus /metrics, /healthz, /status; omit to disable
 ```
 
 ---
@@ -341,6 +341,46 @@ When `metrics_addr` is set, Firn exposes:
 - **`GET /metrics`** — Prometheus text format. Scrape with any Prometheus-compatible
   collector (Prometheus, VictoriaMetrics, Grafana Agent, etc.).
 - **`GET /healthz`** — Returns HTTP 200. Use for liveness probes.
+- **`GET /status`** — JSON summary of the last completed maintenance cycle. Returns
+  HTTP 503 (with `{"error":"no cycle completed yet"}`) if Firn has not finished its
+  first cycle. Example response:
+
+```json
+{
+  "started_at": "2026-04-22T03:45:00Z",
+  "finished_at": "2026-04-22T03:45:04Z",
+  "duration": "4.2s",
+  "tables": [
+    {
+      "table": "analytics.events",
+      "compaction": {
+        "jobs": 2,
+        "files_merged": 14,
+        "bytes_before": 10485760,
+        "bytes_after": 5242880,
+        "errors": 0
+      },
+      "expiry": {
+        "expired_snapshots": 3,
+        "deleted_manifests": 6,
+        "deleted_data_files": 0
+      }
+    },
+    {
+      "table": "analytics.users",
+      "orphan": {
+        "scanned_files": 200,
+        "deleted_files": 4,
+        "skipped_files": 196
+      }
+    }
+  ]
+}
+```
+
+  Tables with nothing to do appear with all operation fields omitted. Only tables
+  that had compaction, expiry, orphan activity, or errors are included in the
+  operation fields.
 
 ### Exposed metrics
 
