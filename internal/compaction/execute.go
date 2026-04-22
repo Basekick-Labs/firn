@@ -172,6 +172,7 @@ func (e *Engine) executeWithSplit(ctx context.Context, c Candidate, depth int) (
 		InputFiles:    inputPaths,
 		OutputPath:    outputURI,
 		SortKeys:      c.Policy.SortKeys,
+		ZOrderColumns: c.Policy.ZOrderColumns,
 		Strategy:      c.Policy.Strategy,
 		MemoryLimit:   e.cfg.Scheduler.MemoryLimit,
 		StorageType:   e.cfg.Storage.Type,
@@ -451,7 +452,7 @@ func downloadFile(ctx context.Context, stor storage.Backend, remotePath, localPa
 	return n, err
 }
 
-var sortKeyRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.]*$`)
+var columnNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.]*$`)
 
 // buildOrderClause returns an ORDER BY clause with double-quoted identifiers, or "" if sortKeys is empty.
 // Returns an error if any key contains characters that are not safe column name characters.
@@ -461,12 +462,31 @@ func buildOrderClause(sortKeys []string) (string, error) {
 	}
 	quoted := make([]string, len(sortKeys))
 	for i, k := range sortKeys {
-		if !sortKeyRE.MatchString(k) {
+		if !columnNameRE.MatchString(k) {
 			return "", fmt.Errorf("invalid sort_key %q: must match [A-Za-z_][A-Za-z0-9_.]*", k)
 		}
 		quoted[i] = `"` + k + `"`
 	}
 	return "ORDER BY " + strings.Join(quoted, ", "), nil
+}
+
+// buildZOrderClause returns an ORDER BY clause that approximates z-order (Morton curve)
+// locality by sorting on the hash of each column in sequence. True bit-interleaving would
+// require the lindel DuckDB community extension (internet access at runtime); hash ordering
+// gives equivalent multi-column co-location for query filter acceleration without external
+// dependencies.
+func buildZOrderClause(cols []string) (string, error) {
+	if len(cols) == 0 {
+		return "", nil
+	}
+	terms := make([]string, len(cols))
+	for i, c := range cols {
+		if !columnNameRE.MatchString(c) {
+			return "", fmt.Errorf("invalid z_order_column name %q: must match [A-Za-z_][A-Za-z0-9_.]*", c)
+		}
+		terms[i] = fmt.Sprintf(`hash("%s")`, c)
+	}
+	return "ORDER BY " + strings.Join(terms, ", "), nil
 }
 
 func runDuckDB(localInputs []string, outputPath string, cfg SubprocessConfig) error {
@@ -492,9 +512,22 @@ func runDuckDB(localInputs []string, outputPath string, cfg SubprocessConfig) er
 	}
 	inputList := "[" + strings.Join(fileQuoted, ", ") + "]"
 
-	orderClause, err := buildOrderClause(cfg.SortKeys)
-	if err != nil {
-		return err
+	var (
+		orderClause string
+		clauseErr   error
+	)
+	switch cfg.Strategy {
+	case "binpack", "":
+		// no ORDER BY
+	case "sort":
+		orderClause, clauseErr = buildOrderClause(cfg.SortKeys)
+	case "z-order":
+		orderClause, clauseErr = buildZOrderClause(cfg.ZOrderColumns)
+	default:
+		return fmt.Errorf("unknown compaction strategy %q", cfg.Strategy)
+	}
+	if clauseErr != nil {
+		return clauseErr
 	}
 
 	safeOutput := strings.ReplaceAll(outputPath, "'", "''")

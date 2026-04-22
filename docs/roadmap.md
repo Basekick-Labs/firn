@@ -26,7 +26,7 @@ Goal: full S3 Tables feature parity for maintenance operations.
 - [x] Snapshot expiry (retention by count + age)
 - [x] Orphan file cleanup (grace period, batch delete)
 - [x] Sort compaction strategy (ORDER BY sort keys)
-- [ ] Z-order compaction strategy
+- [x] Z-order compaction strategy
 - [x] Adaptive batch splitting on OOM/segfault
 - [x] Per-namespace policy overrides
 - [x] Per-table policy overrides
