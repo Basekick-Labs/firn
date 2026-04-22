@@ -212,6 +212,42 @@ func TestBuildOrderClause(t *testing.T) {
 	}
 }
 
+func TestBuildZOrderClause(t *testing.T) {
+	tests := []struct {
+		cols    []string
+		want    string
+		wantErr bool
+	}{
+		{nil, "", false},
+		{[]string{}, "", false},
+		{[]string{"user_id"}, `ORDER BY hash("user_id")`, false},
+		{[]string{"user_id", "event_type"}, `ORDER BY hash("user_id"), hash("event_type")`, false},
+		{[]string{"user_id", "event_type", "ts"}, `ORDER BY hash("user_id"), hash("event_type"), hash("ts")`, false},
+		{[]string{"user id"}, "", true},             // space not allowed
+		{[]string{"1bad"}, "", true},                // must start with letter or underscore
+		{[]string{"x; DROP TABLE t"}, "", true},     // SQL injection rejected
+	}
+	for _, tc := range tests {
+		got, err := buildZOrderClause(tc.cols)
+		if tc.wantErr {
+			assert.Error(t, err)
+		} else {
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		}
+	}
+}
+
+func TestFindCandidates_ZOrderStrategyRequiresColumns(t *testing.T) {
+	engine := NewEngine(&panicCatalog{}, testutil.NewMemStorage(nil), &config.Config{})
+	_, err := engine.FindCandidates(context.Background(),
+		catalog.TableIdentifier{Namespace: "ns", Name: "tbl"},
+		config.CompactionPolicy{Enabled: testutil.BoolPtr(true), Strategy: "z-order", ZOrderColumns: nil},
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "z_order_column")
+}
+
 func TestFindCandidates_DeleteManifestSkipped(t *testing.T) {
 	snapTime := time.Now().UTC().Add(-2 * time.Hour)
 

@@ -406,7 +406,7 @@ Apache License 2.0. See [LICENSE](LICENSE).
 
 ## Status
 
-Firn is in active development (pre-v1.0). Compaction (binpack + sort strategies,
+Firn is in active development (pre-v1.0). Compaction (binpack, sort, and z-order strategies,
 DuckDB subprocess-isolated), snapshot expiry (retention by count + age, atomic
 removal), and orphan file cleanup (grace period, full manifest-walk live-file
 reconciliation) are implemented end-to-end. AWS Glue, Lakekeeper, Apache Polaris,

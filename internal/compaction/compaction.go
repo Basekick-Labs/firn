@@ -49,6 +49,7 @@ type SubprocessConfig struct {
 	InputFiles    []string `json:"input_files"`
 	OutputPath    string   `json:"output_path"`
 	SortKeys      []string `json:"sort_keys"`
+	ZOrderColumns []string `json:"z_order_columns"`
 	Strategy      string   `json:"strategy"`
 	MemoryLimit   string   `json:"memory_limit"`
 	StorageType   string   `json:"storage_type"`
@@ -81,6 +82,9 @@ func NewEngine(cat catalog.Client, stor storage.Backend, cfg *config.Config) *En
 func (e *Engine) FindCandidates(ctx context.Context, id catalog.TableIdentifier, policy config.CompactionPolicy) ([]Candidate, error) {
 	if policy.Strategy == "sort" && len(policy.SortKeys) == 0 {
 		return nil, fmt.Errorf("sort compaction strategy requires at least one sort_key")
+	}
+	if policy.Strategy == "z-order" && len(policy.ZOrderColumns) == 0 {
+		return nil, fmt.Errorf("z-order compaction strategy requires at least one z_order_column")
 	}
 
 	meta, err := e.catalog.LoadTable(ctx, id)
