@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -55,12 +56,28 @@ func run(cmd *cobra.Command, _ []string) error {
 	)
 	metricsReg := metrics.NewRegistry(promReg)
 
+	s, err := scheduler.New(cfg, metricsReg)
+	if err != nil {
+		return err
+	}
+
 	// Start metrics + health HTTP server if configured.
 	if cfg.Scheduler.MetricsAddr != "" {
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", promhttp.HandlerFor(promReg, promhttp.HandlerOpts{}))
 		mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte("ok\n"))
+		})
+		mux.HandleFunc("/status", func(w http.ResponseWriter, _ *http.Request) {
+			cs := s.LastCycle()
+			if cs == nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte(`{"error":"no cycle completed yet"}`))
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(cs)
 		})
 		srv := &http.Server{
 			Addr:    cfg.Scheduler.MetricsAddr,
@@ -85,11 +102,6 @@ func run(cmd *cobra.Command, _ []string) error {
 			return fmt.Errorf("metrics server: %w", err)
 		case <-time.After(100 * time.Millisecond):
 		}
-	}
-
-	s, err := scheduler.New(cfg, metricsReg)
-	if err != nil {
-		return err
 	}
 
 	return s.Run(cmd.Context())
