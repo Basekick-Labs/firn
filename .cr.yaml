@@ -1,5 +1,5 @@
 owner: basekick-labs
 git-repo: firn
-charts-dir: chart
+charts-dir: .
 release-name-template: "chart-{{ .Version }}"
 pages-branch: gh-pages

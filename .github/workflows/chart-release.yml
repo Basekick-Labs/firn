@@ -31,7 +31,7 @@ jobs:
         uses: helm/chart-releaser-action@v1.6.0
         with:
           config: .cr.yaml
-          charts_dir: chart
+          charts_dir: .
           pages_branch: gh-pages
         env:
           CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
