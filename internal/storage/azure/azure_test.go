@@ -32,7 +32,7 @@ func startAzurite(t *testing.T) string {
 	req := testcontainers.ContainerRequest{
 		Image:        azuriteImage,
 		ExposedPorts: []string{"10000/tcp"},
-		Cmd:          []string{"azurite-blob", "--blobHost", "0.0.0.0"},
+		Cmd:          []string{"azurite-blob", "--blobHost", "0.0.0.0", "--skipApiVersionCheck"},
 		WaitingFor:   wait.ForListeningPort("10000/tcp").WithStartupTimeout(60 * time.Second),
 	}
 	ctr, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
