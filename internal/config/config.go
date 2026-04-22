@@ -29,12 +29,21 @@ type CatalogCredential struct {
 }
 
 type StorageConfig struct {
-	Type            string `yaml:"type"` // s3
+	Type string `yaml:"type"` // s3 | gcs | azure
+	// S3 / S3-compatible
 	Endpoint        string `yaml:"endpoint"`
 	Region          string `yaml:"region"`
 	AccessKeyID     string `yaml:"access_key_id"`
 	SecretAccessKey string `yaml:"secret_access_key"`
 	PathStyle       bool   `yaml:"path_style"`
+	// GCS
+	Project         string `yaml:"project"`
+	CredentialsJSON string `yaml:"credentials_json"`
+	// Azure Blob Storage
+	Account          string `yaml:"account"`
+	Container        string `yaml:"container"`
+	AccountKey       string `yaml:"account_key"`
+	ConnectionString string `yaml:"connection_string"`
 }
 
 type MaintenanceConfig struct {
@@ -163,6 +172,14 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Storage.Type == "" {
 		return fmt.Errorf("storage.type is required")
+	}
+	switch cfg.Storage.Type {
+	case "s3", "gcs", "azure":
+	default:
+		return fmt.Errorf("storage.type %q is not supported", cfg.Storage.Type)
+	}
+	if cfg.Storage.Type == "azure" && cfg.Storage.Container == "" {
+		return fmt.Errorf("storage.container is required for storage.type \"azure\"")
 	}
 	return nil
 }

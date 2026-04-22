@@ -158,8 +158,8 @@ interop). No AWS account required.
 | Cloudflare R2 | ✅ Implemented |
 | Tigris | ✅ Implemented |
 | Ceph (S3-compatible) | ✅ Implemented |
-| Google Cloud Storage | Planned (v0.2) |
-| Azure Blob Storage | Planned (v0.2) |
+| Google Cloud Storage | ✅ Implemented |
+| Azure Blob Storage | ✅ Implemented |
 
 ---
 
@@ -178,12 +178,27 @@ catalog:
     # Override OAuth2 token endpoint (Nessie + external IdP, or Polaris custom auth)
 
 storage:
-  type: s3
-  endpoint: http://localhost:9000   # omit for AWS
+  type: s3                          # s3 | gcs | azure
+  endpoint: http://localhost:9000   # omit for AWS; set for MinIO, R2, etc.
   region: us-east-1
   access_key_id: minioadmin
   secret_access_key: minioadmin
   path_style: true                  # required for MinIO
+
+# Google Cloud Storage — uses Application Default Credentials if credentials_json is omitted
+# storage:
+#   type: gcs
+#   project: my-gcp-project         # optional
+#   credentials_json: |             # optional; omit to use ADC (Workload Identity, gcloud auth, etc.)
+#     { "type": "service_account", ... }
+
+# Azure Blob Storage — uses Managed Identity if account_key/connection_string are omitted
+# storage:
+#   type: azure
+#   account: mystorageaccount
+#   container: mycontainer          # required; the default blob container for metadata operations
+#   account_key: base64key==        # optional; omit to use Managed Identity / env credentials
+#   connection_string: "..."        # alternative to account + account_key
 
 maintenance:
   # Default policy applied to all tables unless overridden
@@ -450,8 +465,8 @@ Firn is in active development (pre-v1.0). Compaction (binpack, sort, and z-order
 DuckDB subprocess-isolated), snapshot expiry (retention by count + age, atomic
 removal), and orphan file cleanup (grace period, full manifest-walk live-file
 reconciliation) are implemented end-to-end. AWS Glue, Lakekeeper, Apache Polaris,
-and Project Nessie catalogs are supported. S3-compatible storage and config-driven
-scheduling are working.
+and Project Nessie catalogs are supported. AWS S3 / S3-compatible (MinIO, R2, Ceph),
+Google Cloud Storage, and Azure Blob Storage backends are supported.
 
 Not yet suitable for production use.
 

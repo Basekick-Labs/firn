@@ -316,25 +316,45 @@ func (e *Engine) commitWithRetry(ctx context.Context, tableID catalog.TableIdent
 }
 
 // storageConfigJSON serialises the storage credentials for the subprocess.
-// bucket is extracted from the table location URI.
+// bucket is the bucket/container name extracted from the table location URI.
 func (e *Engine) storageConfigJSON(bucket string) (string, error) {
-	sc := storage.S3Config{
-		Bucket:          bucket,
-		Endpoint:        e.cfg.Storage.Endpoint,
-		Region:          e.cfg.Storage.Region,
-		AccessKeyID:     e.cfg.Storage.AccessKeyID,
-		SecretAccessKey: e.cfg.Storage.SecretAccessKey,
-		PathStyle:       e.cfg.Storage.PathStyle,
+	var (
+		data []byte
+		err  error
+	)
+	switch e.cfg.Storage.Type {
+	case "gcs":
+		data, err = json.Marshal(storage.GCSConfig{
+			Bucket:          bucket,
+			Project:         e.cfg.Storage.Project,
+			CredentialsJSON: e.cfg.Storage.CredentialsJSON,
+		})
+	case "azure":
+		data, err = json.Marshal(storage.AzureConfig{
+			Account:          e.cfg.Storage.Account,
+			Container:        bucket,
+			AccountKey:       e.cfg.Storage.AccountKey,
+			ConnectionString: e.cfg.Storage.ConnectionString,
+		})
+	default: // "s3" and any future S3-compatible type
+		data, err = json.Marshal(storage.S3Config{
+			Bucket:          bucket,
+			Endpoint:        e.cfg.Storage.Endpoint,
+			Region:          e.cfg.Storage.Region,
+			AccessKeyID:     e.cfg.Storage.AccessKeyID,
+			SecretAccessKey: e.cfg.Storage.SecretAccessKey,
+			PathStyle:       e.cfg.Storage.PathStyle,
+		})
 	}
-	data, err := json.Marshal(sc)
 	if err != nil {
 		return "", fmt.Errorf("marshal storage config: %w", err)
 	}
 	return string(data), nil
 }
 
-// bucketFromURI extracts the S3 bucket name from a URI like s3://bucket/prefix.
-// For non-URI paths the empty string is returned (local/relative storage).
+// bucketFromURI extracts the bucket/container name from a cloud storage URI.
+// Supports s3://, gs://, wasbs://, and abfss:// schemes. Returns empty string
+// for non-URI (local/relative) paths.
 func bucketFromURI(uri string) (string, error) {
 	if !strings.Contains(uri, "://") {
 		return "", nil
