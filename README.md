@@ -249,6 +249,10 @@ scheduler:
   max_concurrent_jobs: 4
   memory_limit: "4GB"               # DuckDB memory cap per compaction job
   metrics_addr: ":9090"             # Prometheus /metrics, /healthz, /status; omit to disable
+  retry:
+    max_attempts: 5                  # total commit attempts before giving up (default 5)
+    base_delay: "200ms"              # first backoff window; doubles each retry (default 200ms)
+    max_delay: "10s"                 # cap on backoff window (default 10s)
 ```
 
 ---

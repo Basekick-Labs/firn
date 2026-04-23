@@ -10,6 +10,7 @@ import (
 	"github.com/basekick-labs/firn/internal/catalog"
 	"github.com/basekick-labs/firn/internal/config"
 	"github.com/basekick-labs/firn/internal/iceberg"
+	"github.com/basekick-labs/firn/internal/retry"
 	"github.com/basekick-labs/firn/internal/storage"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/sync/errgroup"
@@ -70,11 +71,12 @@ type Engine struct {
 	catalog      catalog.Client
 	storage      storage.Backend
 	cfg          *config.Config
+	retryer      *retry.Retryer
 	subprocessFn func(ctx context.Context, cfg SubprocessConfig) (SubprocessResult, error)
 }
 
-func NewEngine(cat catalog.Client, stor storage.Backend, cfg *config.Config) *Engine {
-	return &Engine{catalog: cat, storage: stor, cfg: cfg, subprocessFn: spawnSubprocess}
+func NewEngine(cat catalog.Client, stor storage.Backend, cfg *config.Config, retryer *retry.Retryer) *Engine {
+	return &Engine{catalog: cat, storage: stor, cfg: cfg, retryer: retryer, subprocessFn: spawnSubprocess}
 }
 
 // FindCandidates reads the current snapshot's manifests and returns file groups

@@ -2,7 +2,6 @@ package expiry
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -10,6 +9,7 @@ import (
 	"github.com/basekick-labs/firn/internal/catalog"
 	"github.com/basekick-labs/firn/internal/config"
 	"github.com/basekick-labs/firn/internal/iceberg"
+	"github.com/basekick-labs/firn/internal/retry"
 	"github.com/basekick-labs/firn/internal/storage"
 	"github.com/rs/zerolog/log"
 )
@@ -18,11 +18,12 @@ import (
 type Engine struct {
 	catalog catalog.Client
 	storage storage.Backend
+	retryer *retry.Retryer
 }
 
 // NewEngine creates a new expiry Engine.
-func NewEngine(cat catalog.Client, stor storage.Backend) *Engine {
-	return &Engine{catalog: cat, storage: stor}
+func NewEngine(cat catalog.Client, stor storage.Backend, retryer *retry.Retryer) *Engine {
+	return &Engine{catalog: cat, storage: stor, retryer: retryer}
 }
 
 // Result is the outcome of one expiry run against a table.
@@ -157,7 +158,7 @@ func SelectExpired(meta *iceberg.TableMetadata, policy config.SnapshotExpiry, no
 	return ids
 }
 
-// commitWithRetry commits the remove-snapshots transaction, retrying up to 3 times on conflict.
+// commitWithRetry commits the remove-snapshots transaction, retrying on conflict with backoff.
 // It reloads the table and re-evaluates SelectExpired on each attempt so that the expired set
 // always reflects the current ancestry chain.
 //
@@ -169,16 +170,20 @@ func (e *Engine) commitWithRetry(
 	policy config.SnapshotExpiry,
 	now time.Time,
 ) ([]int64, *iceberg.TableMetadata, error) {
-	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
+	var (
+		resultIDs  []int64
+		resultMeta *iceberg.TableMetadata
+	)
+	err := e.retryer.Do(ctx, retry.IsConflict, func(attempt int) error {
 		meta, err := e.catalog.LoadTable(ctx, id)
 		if err != nil {
-			return nil, nil, fmt.Errorf("load table: %w", err)
+			return fmt.Errorf("load table: %w", err)
 		}
 
 		expiredIDs := SelectExpired(meta, policy, now)
 		if len(expiredIDs) == 0 {
-			return nil, meta, nil
+			resultMeta = meta
+			return nil
 		}
 
 		tx := catalog.Transaction{
@@ -190,18 +195,18 @@ func (e *Engine) commitWithRetry(
 			},
 		}
 
-		lastErr = e.catalog.CommitTransaction(ctx, id, tx)
-		if lastErr == nil {
-			return expiredIDs, meta, nil
+		if err := e.catalog.CommitTransaction(ctx, id, tx); err != nil {
+			log.Debug().Str("table", id.String()).Int("failed_attempt", attempt+1).Msg("snapshot expiry commit conflict, retrying")
+			return err
 		}
-
-		var conflict catalog.ErrConflict
-		if !errors.As(lastErr, &conflict) {
-			return nil, nil, lastErr
-		}
-		log.Debug().Str("table", id.String()).Int("attempt", attempt+1).Msg("snapshot expiry commit conflict, retrying")
+		resultIDs = expiredIDs
+		resultMeta = meta
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
 	}
-	return nil, nil, fmt.Errorf("commit failed after 3 attempts: %w", lastErr)
+	return resultIDs, resultMeta, nil
 }
 
 // collectManifestGarbage identifies manifest lists, manifests, and data files that are

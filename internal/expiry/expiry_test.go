@@ -9,6 +9,7 @@ import (
 	"github.com/basekick-labs/firn/internal/catalog"
 	"github.com/basekick-labs/firn/internal/config"
 	"github.com/basekick-labs/firn/internal/iceberg"
+	"github.com/basekick-labs/firn/internal/retry"
 	"github.com/basekick-labs/firn/internal/testutil"
 	"github.com/hamba/avro/v2/ocf"
 	"github.com/stretchr/testify/assert"
@@ -246,7 +247,7 @@ func TestExecuteExpiry_DisabledPolicy(t *testing.T) {
 		CurrentSnapshotID: 1,
 		Snapshots:         []iceberg.Snapshot{{SnapshotID: 1, TimestampMs: ms(time.Now().Add(-1000 * time.Hour))}},
 	}}
-	e := NewEngine(cat, testutil.NewMemStorage(nil))
+	e := NewEngine(cat, testutil.NewMemStorage(nil), retry.New(retry.Config{MaxAttempts: 3}))
 	result, err := e.ExecuteExpiry(context.Background(), tableID, config.SnapshotExpiry{Enabled: testutil.BoolPtr(false)})
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.ExpiredSnapshots)
@@ -259,7 +260,7 @@ func TestExecuteExpiry_NoExpiredSnapshots(t *testing.T) {
 		CurrentSnapshotID: 1,
 		Snapshots:         []iceberg.Snapshot{{SnapshotID: 1, TimestampMs: ms(now)}},
 	}}
-	e := NewEngine(cat, testutil.NewMemStorage(nil))
+	e := NewEngine(cat, testutil.NewMemStorage(nil), retry.New(retry.Config{MaxAttempts: 3}))
 	result, err := e.ExecuteExpiry(context.Background(), tableID, policy120())
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.ExpiredSnapshots)
@@ -297,7 +298,7 @@ func TestExecuteExpiry_ExpiresSnapshots(t *testing.T) {
 	}
 	cat := &mockCatalog{meta: meta}
 
-	e := NewEngine(cat, stor)
+	e := NewEngine(cat, stor, retry.New(retry.Config{MaxAttempts: 3}))
 	result, err := e.ExecuteExpiry(context.Background(), tableID, policy120())
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.ExpiredSnapshots)
@@ -329,7 +330,7 @@ func TestExecuteExpiry_ConflictRetry(t *testing.T) {
 	}
 	failOnce := &failOnceCatalog{meta: meta, failFirst: true}
 
-	e := NewEngine(failOnce, testutil.NewMemStorage(nil))
+	e := NewEngine(failOnce, testutil.NewMemStorage(nil), retry.New(retry.Config{MaxAttempts: 3}))
 	result, err := e.ExecuteExpiry(context.Background(), tableID, policy120())
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.ExpiredSnapshots)
@@ -350,7 +351,7 @@ func TestExecuteExpiry_ConflictMaxRetries(t *testing.T) {
 		},
 		commitErr: catalog.ErrConflict{Table: tableID},
 	}
-	e := NewEngine(cat, testutil.NewMemStorage(nil))
+	e := NewEngine(cat, testutil.NewMemStorage(nil), retry.New(retry.Config{MaxAttempts: 3}))
 	_, err := e.ExecuteExpiry(context.Background(), tableID, policy120())
 	require.Error(t, err)
 	assert.Equal(t, 3, cat.commitCalls)
@@ -386,7 +387,7 @@ func TestExecuteExpiry_SharedManifestPreserved(t *testing.T) {
 		},
 	}}
 
-	e := NewEngine(cat, stor)
+	e := NewEngine(cat, stor, retry.New(retry.Config{MaxAttempts: 3}))
 	result, err := e.ExecuteExpiry(context.Background(), tableID, policy120())
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.ExpiredSnapshots)
