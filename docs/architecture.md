@@ -69,15 +69,17 @@ Implementations:
 ```go
 type Backend interface {
     Read(ctx context.Context, path string) (io.ReadCloser, error)
+    ReadTo(ctx context.Context, path string, w io.Writer) error
     Write(ctx context.Context, path string, r io.Reader, size int64) error
     Delete(ctx context.Context, path string) error
-    DeleteMany(ctx context.Context, paths []string) error
     Exists(ctx context.Context, path string) (bool, error)
     List(ctx context.Context, prefix string) ([]string, error)
     StatFile(ctx context.Context, path string) (int64, error)
     ModTime(ctx context.Context, path string) (time.Time, error)
 }
 ```
+
+Implementations: `storage/s3` (AWS S3, MinIO, R2, Tigris), `storage/gcs` (Google Cloud Storage), `storage/azure` (Azure Blob Storage).
 
 ---
 
@@ -164,7 +166,8 @@ via the catalog's transaction API. The commit includes:
 
 The catalog enforces optimistic concurrency. If another writer committed between
 the time Firn read the current snapshot and the time it attempts to commit, the
-catalog returns a conflict error and Firn retries from candidate selection.
+catalog returns a conflict error. Firn retries with exponential backoff and full
+jitter (configurable via `scheduler.retry`; default: 5 attempts, 200ms base, 10s cap).
 
 ---
 
@@ -274,7 +277,10 @@ firn/
 │   │   ├── nessie/     # Thin wrapper over rest.Client (/iceberg prefix)
 │   │   └── glue/       # AWS Glue Data Catalog client
 │   ├── storage/        # Storage backend interface + implementations
-│   │   └── s3/         # S3-compatible backend (AWS S3, MinIO, R2, Tigris, ...)
+│   │   ├── s3/         # S3-compatible backend (AWS S3, MinIO, R2, Tigris, ...)
+│   │   ├── gcs/        # Google Cloud Storage backend
+│   │   └── azure/      # Azure Blob Storage backend
+│   ├── retry/          # Shared exponential-backoff retryer
 │   ├── compaction/     # Compaction engine
 │   │   ├── compaction.go  # Candidate selection + FindCandidates
 │   │   ├── execute.go     # ExecuteJob, subprocess launch
