@@ -18,6 +18,7 @@ import (
 
 	"github.com/basekick-labs/firn/internal/catalog"
 	"github.com/basekick-labs/firn/internal/iceberg"
+	"github.com/basekick-labs/firn/internal/retry"
 	"github.com/basekick-labs/firn/internal/storage"
 	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/google/uuid"
@@ -280,13 +281,23 @@ func (e *Engine) executeWithSplit(ctx context.Context, c Candidate, depth int) (
 	}, nil
 }
 
-// commitWithRetry commits a new snapshot, retrying up to 3 times on ErrConflict.
+// commitWithRetry commits a new snapshot, retrying on ErrConflict with backoff.
 // On each conflict it reloads the table to get the current snapshot ID and updates
 // snap.ParentSnapshotID. snap.SnapshotID is intentionally not changed between
 // retries — it must remain unique for the lifetime of the table.
 func (e *Engine) commitWithRetry(ctx context.Context, tableID catalog.TableIdentifier, currentSnapshotID int64, snap *iceberg.Snapshot) error {
-	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
+	return e.retryer.Do(ctx, retry.IsConflict, func(attempt int) error {
+		if attempt > 0 {
+			// Reload to get the fresh current snapshot ID for this attempt.
+			meta, err := e.catalog.LoadTable(ctx, tableID)
+			if err != nil {
+				return err
+			}
+			if s := meta.CurrentSnapshot(); s != nil {
+				currentSnapshotID = s.SnapshotID
+				snap.ParentSnapshotID = currentSnapshotID
+			}
+		}
 		tx := catalog.Transaction{
 			Requirements: []catalog.Requirement{{Type: "assert-current-snapshot-id", CurrentSnapshotID: currentSnapshotID}},
 			Updates: []catalog.Update{
@@ -294,25 +305,8 @@ func (e *Engine) commitWithRetry(ctx context.Context, tableID catalog.TableIdent
 				{Type: "set-snapshot-ref", RefName: "main", SnapshotIDs: []int64{snap.SnapshotID}},
 			},
 		}
-		lastErr = e.catalog.CommitTransaction(ctx, tableID, tx)
-		if lastErr == nil {
-			return nil
-		}
-		var conflict catalog.ErrConflict
-		if !errors.As(lastErr, &conflict) {
-			return lastErr
-		}
-		// Reload to get the fresh current snapshot ID for the next attempt.
-		meta, err := e.catalog.LoadTable(ctx, tableID)
-		if err != nil {
-			return err
-		}
-		if s := meta.CurrentSnapshot(); s != nil {
-			currentSnapshotID = s.SnapshotID
-			snap.ParentSnapshotID = currentSnapshotID
-		}
-	}
-	return fmt.Errorf("commit failed after 3 attempts: %w", lastErr)
+		return e.catalog.CommitTransaction(ctx, tableID, tx)
+	})
 }
 
 // storageConfigJSON serialises the storage credentials for the subprocess.

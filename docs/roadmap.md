@@ -42,7 +42,7 @@ Goal: production-ready deployment experience.
 
 - [ ] Policy stored as Iceberg table properties (no restart required)
 - [ ] Job history persistence (survives restart)
-- [ ] Configurable retry with backoff on catalog conflicts
+- [x] Configurable retry with backoff on catalog conflicts
 - [ ] Dry-run mode (plan what would be compacted, don't execute)
 - [ ] Manual trigger API (`POST /trigger/{namespace}/{table}`)
 - [ ] Arc tight integration (Arc registers tables + delegates compaction to Firn)

@@ -55,10 +55,15 @@ func New(cfg *config.Config, metricsReg *metrics.Registry) (*Scheduler, error) {
 		return nil, fmt.Errorf("build storage: %w", err)
 	}
 
+	retryer, err := buildRetryer(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("build retryer: %w", err)
+	}
+
 	return &Scheduler{
 		catalog:  cat,
-		engine:   compaction.NewEngine(cat, stor, cfg),
-		expiry:   expiry.NewEngine(cat, stor),
+		engine:   compaction.NewEngine(cat, stor, cfg, retryer),
+		expiry:   expiry.NewEngine(cat, stor, retryer),
 		orphan:   orphan.NewEngine(cat, stor),
 		policy:   policy.NewResolver(&cfg.Maintenance),
 		metrics:  metricsReg,

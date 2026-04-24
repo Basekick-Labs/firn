@@ -9,11 +9,17 @@ import (
 	"github.com/basekick-labs/firn/internal/catalog"
 	"github.com/basekick-labs/firn/internal/config"
 	"github.com/basekick-labs/firn/internal/iceberg"
+	"github.com/basekick-labs/firn/internal/retry"
 	"github.com/basekick-labs/firn/internal/testutil"
+
 	"github.com/hamba/avro/v2/ocf"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func testRetryer() *retry.Retryer {
+	return retry.New(retry.Config{MaxAttempts: 3})
+}
 
 // --- avro builders ---
 
@@ -77,7 +83,7 @@ func encodeAvro(t *testing.T, schema string, records any) []byte {
 // --- tests ---
 
 func TestFindCandidates_EmptyTable(t *testing.T) {
-	engine := NewEngine(&mockCatalog{meta: &iceberg.TableMetadata{}}, testutil.NewMemStorage(nil), &config.Config{})
+	engine := NewEngine(&mockCatalog{meta: &iceberg.TableMetadata{}}, testutil.NewMemStorage(nil), &config.Config{}, testRetryer())
 	candidates, err := engine.FindCandidates(context.Background(),
 		catalog.TableIdentifier{Namespace: "ns", Name: "tbl"},
 		config.CompactionPolicy{Enabled: testutil.BoolPtr(true), MinFileCount: 2, MinFileAgeMinutes: 0},
@@ -120,7 +126,7 @@ func TestFindCandidates_TwoPartitionsOneEligible(t *testing.T) {
 		},
 	}
 
-	engine := NewEngine(&mockCatalog{meta: meta}, stor, &config.Config{})
+	engine := NewEngine(&mockCatalog{meta: meta}, stor, &config.Config{}, testRetryer())
 	candidates, err := engine.FindCandidates(context.Background(),
 		catalog.TableIdentifier{Namespace: "ns", Name: "tbl"},
 		config.CompactionPolicy{Enabled: testutil.BoolPtr(true), MinFileCount: 2, MinFileAgeMinutes: 60},
@@ -156,7 +162,7 @@ func TestFindCandidates_AgeFilter(t *testing.T) {
 		},
 	}
 
-	engine := NewEngine(&mockCatalog{meta: meta}, stor, &config.Config{})
+	engine := NewEngine(&mockCatalog{meta: meta}, stor, &config.Config{}, testRetryer())
 	candidates, err := engine.FindCandidates(context.Background(),
 		catalog.TableIdentifier{Namespace: "ns", Name: "tbl"},
 		config.CompactionPolicy{Enabled: testutil.BoolPtr(true), MinFileCount: 2, MinFileAgeMinutes: 60},
@@ -166,7 +172,7 @@ func TestFindCandidates_AgeFilter(t *testing.T) {
 }
 
 func TestFindCandidates_DisabledPolicy(t *testing.T) {
-	engine := NewEngine(&mockCatalog{meta: &iceberg.TableMetadata{}}, testutil.NewMemStorage(nil), &config.Config{})
+	engine := NewEngine(&mockCatalog{meta: &iceberg.TableMetadata{}}, testutil.NewMemStorage(nil), &config.Config{}, testRetryer())
 	candidates, err := engine.FindCandidates(context.Background(),
 		catalog.TableIdentifier{Namespace: "ns", Name: "tbl"},
 		config.CompactionPolicy{Enabled: testutil.BoolPtr(false)},
@@ -178,7 +184,7 @@ func TestFindCandidates_DisabledPolicy(t *testing.T) {
 func TestFindCandidates_SortStrategyRequiresSortKeys(t *testing.T) {
 	// panicCatalog panics if LoadTable is called, enforcing that validation
 	// short-circuits before any catalog I/O.
-	engine := NewEngine(&panicCatalog{}, testutil.NewMemStorage(nil), &config.Config{})
+	engine := NewEngine(&panicCatalog{}, testutil.NewMemStorage(nil), &config.Config{}, testRetryer())
 	_, err := engine.FindCandidates(context.Background(),
 		catalog.TableIdentifier{Namespace: "ns", Name: "tbl"},
 		config.CompactionPolicy{Enabled: testutil.BoolPtr(true), Strategy: "sort", SortKeys: nil},
@@ -239,7 +245,7 @@ func TestBuildZOrderClause(t *testing.T) {
 }
 
 func TestFindCandidates_ZOrderStrategyRequiresColumns(t *testing.T) {
-	engine := NewEngine(&panicCatalog{}, testutil.NewMemStorage(nil), &config.Config{})
+	engine := NewEngine(&panicCatalog{}, testutil.NewMemStorage(nil), &config.Config{}, testRetryer())
 	_, err := engine.FindCandidates(context.Background(),
 		catalog.TableIdentifier{Namespace: "ns", Name: "tbl"},
 		config.CompactionPolicy{Enabled: testutil.BoolPtr(true), Strategy: "z-order", ZOrderColumns: nil},
@@ -266,7 +272,7 @@ func TestFindCandidates_DeleteManifestSkipped(t *testing.T) {
 		},
 	}
 
-	engine := NewEngine(&mockCatalog{meta: meta}, stor, &config.Config{})
+	engine := NewEngine(&mockCatalog{meta: meta}, stor, &config.Config{}, testRetryer())
 	candidates, err := engine.FindCandidates(context.Background(),
 		catalog.TableIdentifier{Namespace: "ns", Name: "tbl"},
 		config.CompactionPolicy{Enabled: testutil.BoolPtr(true), MinFileCount: 1, MinFileAgeMinutes: 0},

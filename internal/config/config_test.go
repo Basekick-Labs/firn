@@ -145,6 +145,89 @@ storage:
 	assert.Contains(t, err.Error(), "hdfs")
 }
 
+func TestLoad_RetryDefaults(t *testing.T) {
+	path := writeTemp(t, `
+catalog:
+  type: lakekeeper
+  url: http://localhost:8080
+storage:
+  type: s3
+`)
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, 5, cfg.Scheduler.Retry.MaxAttempts)
+	assert.Equal(t, "200ms", cfg.Scheduler.Retry.BaseDelay)
+	assert.Equal(t, "10s", cfg.Scheduler.Retry.MaxDelay)
+}
+
+func TestLoad_RetryExplicit(t *testing.T) {
+	path := writeTemp(t, `
+catalog:
+  type: lakekeeper
+  url: http://localhost:8080
+storage:
+  type: s3
+scheduler:
+  retry:
+    max_attempts: 10
+    base_delay: 500ms
+    max_delay: 30s
+`)
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, 10, cfg.Scheduler.Retry.MaxAttempts)
+	assert.Equal(t, "500ms", cfg.Scheduler.Retry.BaseDelay)
+	assert.Equal(t, "30s", cfg.Scheduler.Retry.MaxDelay)
+}
+
+func TestLoad_RetryInvalidBaseDelay(t *testing.T) {
+	path := writeTemp(t, `
+catalog:
+  type: lakekeeper
+  url: http://localhost:8080
+storage:
+  type: s3
+scheduler:
+  retry:
+    base_delay: not-a-duration
+`)
+	_, err := Load(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "base_delay")
+}
+
+func TestLoad_RetryInvalidMaxDelay(t *testing.T) {
+	path := writeTemp(t, `
+catalog:
+  type: lakekeeper
+  url: http://localhost:8080
+storage:
+  type: s3
+scheduler:
+  retry:
+    max_delay: bad
+`)
+	_, err := Load(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "max_delay")
+}
+
+func TestLoad_RetryMaxAttemptsZeroIsDefaulted(t *testing.T) {
+	path := writeTemp(t, `
+catalog:
+  type: lakekeeper
+  url: http://localhost:8080
+storage:
+  type: s3
+scheduler:
+  retry:
+    max_attempts: 0
+`)
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, 5, cfg.Scheduler.Retry.MaxAttempts)
+}
+
 func TestLoad_NamespaceOverrideEnabledFalse(t *testing.T) {
 	path := writeTemp(t, `
 catalog:

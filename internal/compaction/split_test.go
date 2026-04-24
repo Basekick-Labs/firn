@@ -10,6 +10,7 @@ import (
 
 	"github.com/basekick-labs/firn/internal/catalog"
 	"github.com/basekick-labs/firn/internal/config"
+	"github.com/basekick-labs/firn/internal/retry"
 	"github.com/basekick-labs/firn/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -150,7 +151,7 @@ func newSplitEngine(cat catalog.Client) (*Engine, *testutil.MemStorage) {
 		Storage:   config.StorageConfig{Type: "s3"},
 		Scheduler: config.SchedulerConfig{MemoryLimit: "1GB"},
 	}
-	e := NewEngine(cat, stor, cfg)
+	e := NewEngine(cat, stor, cfg, retry.New(retry.Config{MaxAttempts: 3}))
 	return e, stor
 }
 
@@ -307,4 +308,32 @@ func TestExecuteWithSplit_RecoveryManifestCleanedOnOOM(t *testing.T) {
 	for _, k := range keys {
 		assert.NotContains(t, k, ".firn/recovery/", "stale recovery manifest found: %s", k)
 	}
+}
+
+// TestExecuteWithSplit_CommitConflictRetry verifies that commitWithRetry reloads
+// the table on each conflict, updates ParentSnapshotID, and ultimately succeeds.
+func TestExecuteWithSplit_CommitConflictRetry(t *testing.T) {
+	// conflictCatalog fails first 2 commits then succeeds.
+	cat := &conflictCatalog{meta: newMeta(1), failCount: 2}
+	e, _ := newSplitEngine(cat)
+	e.subprocessFn = successFn()
+
+	_, err := e.ExecuteJob(t.Context(), makeCandidate(2))
+	require.NoError(t, err)
+	assert.Equal(t, 3, cat.commitCalls, "expected 2 conflict retries + 1 success")
+}
+
+// TestExecuteWithSplit_CommitConflictExhausted verifies that the error is
+// propagated and wraps ErrConflict after all retry attempts are exhausted.
+func TestExecuteWithSplit_CommitConflictExhausted(t *testing.T) {
+	// Always conflict — exceeds the 3-attempt retryer used by newSplitEngine.
+	cat := &conflictCatalog{meta: newMeta(1), failCount: 100}
+	e, _ := newSplitEngine(cat)
+	e.subprocessFn = successFn()
+
+	_, err := e.ExecuteJob(t.Context(), makeCandidate(2))
+	require.Error(t, err)
+	var conflict catalog.ErrConflict
+	assert.ErrorAs(t, err, &conflict, "expected wrapped ErrConflict")
+	assert.Equal(t, 3, cat.commitCalls, "should stop after MaxAttempts")
 }

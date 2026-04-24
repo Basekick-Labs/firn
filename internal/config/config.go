@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -90,11 +91,18 @@ type OrphanCleanupPolicy struct {
 // IsEnabled reports whether orphan cleanup is enabled. Returns false if Enabled is nil.
 func (p OrphanCleanupPolicy) IsEnabled() bool { return p.Enabled != nil && *p.Enabled }
 
+type RetryConfig struct {
+	MaxAttempts int    `yaml:"max_attempts"` // total attempts; default 5
+	BaseDelay   string `yaml:"base_delay"`   // e.g. "200ms"; default "200ms"
+	MaxDelay    string `yaml:"max_delay"`    // e.g. "10s"; default "10s"
+}
+
 type SchedulerConfig struct {
-	Interval          string `yaml:"interval"`
-	MaxConcurrentJobs int    `yaml:"max_concurrent_jobs"`
-	MemoryLimit       string `yaml:"memory_limit"`
-	MetricsAddr       string `yaml:"metrics_addr"` // HTTP address for /metrics and /healthz; empty disables
+	Interval          string      `yaml:"interval"`
+	MaxConcurrentJobs int         `yaml:"max_concurrent_jobs"`
+	MemoryLimit       string      `yaml:"memory_limit"`
+	MetricsAddr       string      `yaml:"metrics_addr"` // HTTP address for /metrics and /healthz; empty disables
+	Retry             RetryConfig `yaml:"retry"`
 }
 
 func Load(path string) (*Config, error) {
@@ -129,6 +137,15 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Scheduler.MemoryLimit == "" {
 		cfg.Scheduler.MemoryLimit = "4GB"
+	}
+	if cfg.Scheduler.Retry.MaxAttempts == 0 {
+		cfg.Scheduler.Retry.MaxAttempts = 5
+	}
+	if cfg.Scheduler.Retry.BaseDelay == "" {
+		cfg.Scheduler.Retry.BaseDelay = "200ms"
+	}
+	if cfg.Scheduler.Retry.MaxDelay == "" {
+		cfg.Scheduler.Retry.MaxDelay = "10s"
 	}
 
 	d := &cfg.Maintenance.Defaults
@@ -180,6 +197,19 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Storage.Type == "azure" && cfg.Storage.Container == "" {
 		return fmt.Errorf("storage.container is required for storage.type \"azure\"")
+	}
+	if cfg.Scheduler.Retry.MaxAttempts < 1 {
+		return fmt.Errorf("scheduler.retry.max_attempts must be at least 1")
+	}
+	if _, err := time.ParseDuration(cfg.Scheduler.Retry.BaseDelay); err != nil {
+		return fmt.Errorf("scheduler.retry.base_delay %q: %w", cfg.Scheduler.Retry.BaseDelay, err)
+	}
+	maxDelay, err := time.ParseDuration(cfg.Scheduler.Retry.MaxDelay)
+	if err != nil {
+		return fmt.Errorf("scheduler.retry.max_delay %q: %w", cfg.Scheduler.Retry.MaxDelay, err)
+	}
+	if maxDelay <= 0 {
+		return fmt.Errorf("scheduler.retry.max_delay must be positive")
 	}
 	return nil
 }

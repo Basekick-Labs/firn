@@ -39,3 +39,25 @@ func (m *mockCatalog) CommitTransaction(_ context.Context, _ catalog.TableIdenti
 	m.commitCalls++
 	return m.commitErr
 }
+
+// conflictCatalog returns ErrConflict for the first failCount commits, then succeeds.
+type conflictCatalog struct {
+	meta        *iceberg.TableMetadata
+	failCount   int
+	commitCalls int
+}
+
+func (c *conflictCatalog) ListNamespaces(_ context.Context) ([]string, error) { return nil, nil }
+func (c *conflictCatalog) ListTables(_ context.Context, _ string) ([]catalog.TableIdentifier, error) {
+	return nil, nil
+}
+func (c *conflictCatalog) LoadTable(_ context.Context, _ catalog.TableIdentifier) (*iceberg.TableMetadata, error) {
+	return c.meta, nil
+}
+func (c *conflictCatalog) CommitTransaction(_ context.Context, id catalog.TableIdentifier, _ catalog.Transaction) error {
+	c.commitCalls++
+	if c.commitCalls <= c.failCount {
+		return catalog.ErrConflict{Table: id}
+	}
+	return nil
+}
