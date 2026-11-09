@@ -147,8 +147,7 @@ func (e *Engine) collectLiveFiles(ctx context.Context, meta *iceberg.TableMetada
 			for _, entry := range entries {
 				dPath, err := iceberg.URIToPath(entry.DataFile.FilePath)
 				if err != nil {
-					log.Warn().Err(err).Str("uri", entry.DataFile.FilePath).Msg("cannot parse data file URI, treating as live")
-					continue
+					return nil, fmt.Errorf("parse data file URI %s: %w", entry.DataFile.FilePath, err)
 				}
 				live[dPath] = true
 			}

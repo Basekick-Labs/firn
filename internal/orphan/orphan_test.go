@@ -200,6 +200,29 @@ func TestExecuteCleanup_NeverDeletesJSON(t *testing.T) {
 	assert.True(t, exists, "JSON metadata file must never be deleted")
 }
 
+func TestExecuteCleanup_InvalidDataFileURIAbortsCleanup(t *testing.T) {
+	stor, meta := buildTable(t, "s3://bucket/table")
+
+	// A URI with an empty object path cannot be classified as live or orphaned.
+	// Cleanup must abort rather than risk deleting the referenced object.
+	manifestKey := "table/metadata/snap-1-manifest.avro"
+	manifest := encodeAvro(t, manifestEntrySchemaJSON, []iceberg.ManifestEntry{
+		{Status: iceberg.EntryStatusAdded, DataFile: iceberg.DataFile{FilePath: "s3://bucket/", FileFormat: "PARQUET"}},
+	})
+	require.NoError(t, stor.Write(context.Background(), manifestKey, bytes.NewReader(manifest), int64(len(manifest))))
+
+	orphanKey := "table/data/unrelated-old.parquet"
+	stor.WriteOld(orphanKey, []byte("must survive"), 200*time.Hour)
+
+	e := NewEngine(&mockCatalog{meta: meta}, stor)
+	_, err := e.ExecuteCleanup(context.Background(), tableID, policy(24))
+	require.Error(t, err, "cleanup must abort when a referenced data-file URI cannot be parsed")
+
+	exists, err := stor.Exists(context.Background(), orphanKey)
+	require.NoError(t, err)
+	assert.True(t, exists, "no files should be deleted when live-file reconciliation is incomplete")
+}
+
 func TestExecuteCleanup_LiveSetError(t *testing.T) {
 	// Table references a manifest list that doesn't exist in storage.
 	stor := testutil.NewMemStorage(nil)
